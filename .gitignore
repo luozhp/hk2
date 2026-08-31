@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 运行时数据（原型 JSON 存储）
+hunter/server/data/db.json
+
+# 环境变量（含凭证，禁止提交；保留 .env.example）
+.env
+.env.local
+hunter/server/.env
+hunter/server/.env.local
+
+# 日志
+*.log
