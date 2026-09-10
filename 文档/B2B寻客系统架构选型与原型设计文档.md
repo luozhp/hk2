@@ -5,7 +5,7 @@
 > **编写角色**：产品经理 / 技术负责人
 > **编写日期**：2026-08-31
 > **关联文档**：《B2B寻客系统产品功能文档（PRD）》
-> **文档状态**：评审稿
+> **文档状态**：评审稿（V1.0 已上线，见 [10.1 V1.0 实现状态](#101-v10-实现状态2026-09-01)）
 
 ---
 
@@ -389,6 +389,22 @@
 | V2.0 | 2028 Q1 | Ads API、排名跟踪、归因、AI 辅助 | 放大效果 |
 
 > 总计 MVP 约 **3-4 个月**可上线。
+
+### 10.1 V1.0 实现状态（2026-09-01）
+
+**V1.0 正式版已上线**，与本节选型的差异与落地情况如下：
+
+| 规划选型 | 实际落地 | 说明 |
+|---|---|---|
+| PostgreSQL 15 + Prisma/TypeORM | **SQLite**（Node 内置 `node:sqlite`，WAL 模式） | 单机 SaaS 量级（线索/客户/邮件数万级）SQLite 完全胜任：零配置、事务安全、免运维、成本 0。数据访问统一收敛在 `DbService` 数组 API，未来量级提升可平滑迁移 PostgreSQL。 |
+| Redis + BullMQ 邮件队列 | 未启用（同步发送） | 日发 50 封上限下同步发送足够；发送队列、SLA 定时、排名跟踪列为 V1.1 增强。 |
+| Amazon SES | **SMTP 双通道**（`mock` / `smtp`） | SMTP 通道可直接接入 Amazon SES 的 SMTP 端点（587），域名预热与频控逻辑已内置；`/mail/webhook` 支持回弹/打开/回复回写。 |
+| JWT + 权限矩阵 | ✅ 已实现 | JWT（7 天）+ bcrypt 密码加密 + 三角色 RBAC（管理者/运营专员/业务员）+ 登录页/401 守卫/改密。 |
+| 数据持久化 | ✅ SQLite 自动备份 | 每次启动轮转备份（默认保留 7 份，`server/data/backups/`）；原型版 `db.json` 自动迁移为 SQLite 并归档 `.bak`。 |
+| 部署形态 | ✅ Docker Compose | nginx（前端静态 + `/api` 反代）+ NestJS 容器 + 命名数据卷；`docker compose up -d --build` 一键部署。 |
+| Google Custom Search API | ✅ 支持（`google`/`serp`/`mock`） | 未配置或调用失败自动降级为模拟数据并标记 `degraded:true`。 |
+
+> 默认账号（初始密码 `Hunter@123`，登录后请立即修改）：管理者 `boss@smileiceqi.com` / 运营专员 `ops@smileiceqi.com` / 业务员 `sales@smileiceqi.com`。生产部署须修改 `JWT_SECRET`（`server/.env`，参考 `.env.example`）。
 
 ---
 

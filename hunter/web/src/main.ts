@@ -12,6 +12,6 @@ app.use(createPinia());
 app.use(router);
 app.use(ElementPlus, { locale: zhCn });
 for (const [name, comp] of Object.entries(Icons)) {
-  app.component(name, comp as any);
+  app.component(name, comp);
 }
 app.mount('#app');

@@ -3,6 +3,17 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue';
+import { useAuthStore } from './stores/auth';
+
+const auth = useAuthStore();
+
+onMounted(() => {
+  // 刷新页面后校验 token 并恢复最新用户信息
+  if (auth.token) {
+    auth.fetchMe();
+  }
+});
 </script>
 
 <style>

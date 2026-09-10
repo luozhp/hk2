@@ -1,19 +1,14 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Module, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
 
-const CHECKLIST = [
-  { key: 'factory', label: '工厂介绍页（实拍/产能/年限）', module: '独立站', done: true },
-  { key: 'cert', label: 'MSDS、UN/DOT 证书展示', module: '独立站', done: true },
-  { key: 'oem', label: 'OEM/ODM 说明页', module: '独立站', done: false },
-  { key: 'moq', label: 'MOQ 与批量报价入口', module: '独立站', done: false },
-  { key: 'email', label: '邮件均附 MSDS 与 UN-DOT 链接', module: '邮件', done: true },
-  { key: 'ads', label: '广告否定词已配置（whip charger/gas）', module: '广告', done: false },
-  { key: 'copy', label: '全渠道文案使用 culinary/foodservice 口径', module: '内容', done: true },
-];
-
 @Injectable()
 class ComplianceService {
   constructor(private db: DbService) {}
+
+  /** 合规检查清单：持久化在 db.complianceChecks（早期版本存于模块内存，重启即丢失） */
+  private checks(): any[] {
+    return this.db.db.complianceChecks || [];
+  }
 
   docs() { return this.db.db.complianceDocs; }
 
@@ -66,12 +61,16 @@ class ComplianceService {
   }
 
   checklist() {
-    return CHECKLIST.map((c) => ({ ...c, progress: CHECKLIST.filter((x) => x.done).length }));
+    const rows = this.checks();
+    return rows.map((c) => ({ ...c, progress: rows.filter((x) => x.done).length }));
   }
 
   toggleCheck(body: any) {
-    const item = CHECKLIST.find((c) => c.key === body.key);
-    if (item) item.done = body.done ?? !item.done;
+    const item = this.checks().find((c: any) => c.key === body.key);
+    if (!item) return this.checklist();
+    item.done = body.done ?? !item.done;
+    item.updatedAt = new Date().toISOString();
+    this.db.save();
     return this.checklist();
   }
 }

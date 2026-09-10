@@ -44,7 +44,7 @@ class CompaniesService {
       website: body.website || (body.domain ? `https://${body.domain}` : null),
       email: body.email, phone: body.phone || null, address: body.address || null,
       city: body.city || null, state: body.state || null, country: body.country || 'US',
-      custType: body.custType || 'importer', level: body.level || 'B', tags: body.tags || [],
+      custType: body.custType || 'importer', level: body.level || 'B', source: body.source || null, tags: body.tags || [],
       owner: body.owner || null, description: body.description || '', status: 'active',
       createdAt: new Date().toISOString(),
     };

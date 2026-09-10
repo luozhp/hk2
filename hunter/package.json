@@ -1,6 +1,6 @@
 {
   "name": "hunter-b2b",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "install:all": "npm --prefix server install && npm --prefix web install",

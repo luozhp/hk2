@@ -230,6 +230,6 @@ onMounted(load);
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
-.company-name { font-weight: 600; font-size: 14px; }
-.company-domain { font-size: 12px; color: #909399; }
+.company-name { font-weight: 600; font-size: 14px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.company-domain { font-size: 12px; color: #909399; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

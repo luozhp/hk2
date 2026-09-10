@@ -20,7 +20,8 @@ class DashboardService {
         wonCustomers: d.opportunities.filter((o) => o.stage === 'won').length,
       },
       goals: {
-        inquiry2026: { target: 100, current: d.inquiries.length + 12 },
+        // 与数据看板 KPI 跟踪表同口径：线上询盘 + 线下询盘基数（设置页可配置，默认 12）
+        inquiry2026: { target: 100, current: d.inquiries.length + this.offlineInquiries() },
         customer2028: { target: 20, current: d.companies.length },
       },
       mail: this.mailSummary(),
@@ -29,6 +30,12 @@ class DashboardService {
         .map((t) => ({ ...t, overdue: new Date(t.dueDate) < new Date() }))
         .slice(0, 8),
     };
+  }
+
+  /** 线下询盘基数（可配置，默认 12），与 analytics.kpi() 保持同口径 */
+  private offlineInquiries(): number {
+    const settings: any = (this.db.db as any).settings || {};
+    return Math.max(0, Number(settings.offlineInquiries ?? 12) || 0);
   }
 
   private mailSummary() {

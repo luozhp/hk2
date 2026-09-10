@@ -1,0 +1,22 @@
+# Hunter B2B 寻客系统 · 正式版部署
+# 用法：docker compose up -d --build
+services:
+  server:
+    build: ./server
+    env_file: ./server/.env
+    environment:
+      - NODE_OPTIONS=--experimental-sqlite
+    volumes:
+      - hunter-data:/app/data
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+volumes:
+  hunter-data:

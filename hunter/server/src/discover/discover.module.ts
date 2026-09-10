@@ -58,11 +58,39 @@ class DiscoverService {
   ) {}
 
   presets() { return SYNTAX_PRESETS; }
-  provider() { return DISCOVER_PROVIDER; }
+
+  /** 返回数据源状态与凭证齐备情况，供前端提示"如何获取凭证" */
+  provider() {
+    const provider = DISCOVER_PROVIDER;
+    if (provider === 'google') {
+      const missing: string[] = [];
+      if (!GOOGLE_CSE_KEY) missing.push('GOOGLE_CSE_KEY');
+      if (!GOOGLE_CSE_CX) missing.push('GOOGLE_CSE_CX');
+      return {
+        provider,
+        label: 'Google CSE',
+        configured: missing.length === 0,
+        missing,
+      };
+    }
+    if (provider === 'serp') {
+      const missing: string[] = [];
+      if (!SERP_API_KEY) missing.push('SERP_API_KEY');
+      return {
+        provider,
+        label: 'SerpAPI',
+        configured: missing.length === 0,
+        missing,
+      };
+    }
+    return { provider: 'mock', label: '模拟数据', configured: true, missing: [] };
+  }
 
   async execute(query: any) {
     const syntax = query.syntax || '';
-    const mode = (query.mode || DISCOVER_PROVIDER || 'mock').toLowerCase();
+    const requested = (query.mode || '').toLowerCase();
+    // live 为前端通用标识，归一化为 .env 中配置的真实数据源
+    const mode = requested === 'live' ? DISCOVER_PROVIDER : requested || DISCOVER_PROVIDER;
     if (mode === 'mock' || !this.http) {
       return this.scoreMock(syntax, mode);
     }
@@ -106,7 +134,13 @@ class DiscoverService {
 
   // 真实搜索：优先 Google Custom Search JSON API，其次 SerpAPI
   private async fetchLive(syntax: string, mode: string) {
-    if (mode === 'google' && GOOGLE_CSE_KEY && GOOGLE_CSE_CX) {
+    if (mode === 'google') {
+      const missing: string[] = [];
+      if (!GOOGLE_CSE_KEY) missing.push('GOOGLE_CSE_KEY');
+      if (!GOOGLE_CSE_CX) missing.push('GOOGLE_CSE_CX');
+      if (missing.length) {
+        throw new Error(`缺少真实搜索凭证：请在 server/.env 配置 ${missing.join('、')}（获取方式见页面“获取凭证”说明）`);
+      }
       const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CSE_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(syntax)}&num=10`;
       const res = await firstValueFrom(this.http.get(url));
       const items = res.data.items || [];
@@ -119,7 +153,10 @@ class DiscoverService {
         };
       });
     }
-    if (mode === 'serp' && SERP_API_KEY) {
+    if (mode === 'serp') {
+      if (!SERP_API_KEY) {
+        throw new Error('缺少真实搜索凭证：请在 server/.env 配置 SERP_API_KEY（获取方式见页面“获取凭证”说明）');
+      }
       const url = `https://serpapi.com/search.json?api_key=${SERP_API_KEY}&engine=google&q=${encodeURIComponent(syntax)}&num=10`;
       const res = await firstValueFrom(this.http.get(url));
       const items = res.data.organic_results || [];
@@ -132,7 +169,7 @@ class DiscoverService {
         };
       });
     }
-    throw new Error(`缺少真实搜索凭证（provider=${mode}）`);
+    throw new Error(`未知数据源 provider=${mode}：请在 server/.env 将 DISCOVER_PROVIDER 设为 google、serp 或 mock`);
   }
 }
 
@@ -140,7 +177,7 @@ class DiscoverService {
 export class DiscoverController {
   constructor(private svc: DiscoverService) {}
   @Get('presets') presets() { return this.svc.presets(); }
-  @Get('provider') provider() { return { provider: this.svc.provider() }; }
+  @Get('provider') provider() { return this.svc.provider(); }
   @Get('execute') execute(@Query() q: any) { return this.svc.execute(q); }
 }
 
