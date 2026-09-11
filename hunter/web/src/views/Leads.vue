@@ -25,7 +25,7 @@
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="load">查询</el-button>
+          <el-button type="primary" @click="onSearch">查询</el-button>
           <el-button @click="reset">重置</el-button>
         </el-form-item>
       </el-form>
@@ -44,7 +44,10 @@
         </div>
       </template>
 
-      <el-table :data="leads" @selection-change="(v: any) => (selected = v)" size="default">
+      <el-table :data="leads" v-loading="tableLoading" @selection-change="(v: any) => (selected = v)" size="default">
+        <template #empty>
+          <div style="padding:18px;color:#909399;font-size:13px">暂无线索，可到「线索采集」搜索，或用「导入 Excel」批量导入</div>
+        </template>
         <el-table-column type="selection" width="46" />
         <el-table-column label="公司" min-width="180">
           <template #default="{ row }">
@@ -93,6 +96,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="onPageChange"
+          @size-change="onSizeChange"
+        />
+      </div>
     </el-card>
 
     <!-- 手动录入 -->
@@ -138,6 +153,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api, { dict } from '../api';
+import { useAuthStore } from '../stores/auth';
 
 const leads = ref<any[]>([]);
 const selected = ref<any[]>([]);
@@ -151,21 +167,44 @@ const sourceLabel = (s: string) => dict.source.find((d) => d.value === s)?.label
 const custTypeLabel = (v: string) => dict.custType.find((d) => d.value === v)?.label || v;
 const gradeType = (g: string) => ({ A: 'success', B: 'warning', C: 'info' } as any)[g];
 
+const tableLoading = ref(false);
+// 服务端分页：线索量增长后不再一次性拉全表
+const page = ref(1);
+const pageSize = ref(20);
+const total = ref(0);
+
+const onPageChange = (p: number) => { page.value = p; load(); };
+const onSizeChange = (s: number) => { pageSize.value = s; page.value = 1; load(); };
+// 查询时回到第一页，避免筛选后停留在越界页显示空列表
+const onSearch = () => { page.value = 1; load(); };
+
 const load = async () => {
-  const params: any = {};
-  if (filters.custType) params.custType = filters.custType;
-  if (filters.source) params.source = filters.source;
-  if (filters.grade) params.grade = filters.grade;
-  if (filters.check) params.check = filters.check;
-  leads.value = await api.leads.list(params);
+  tableLoading.value = true;
+  try {
+    const params: any = { page: page.value, pageSize: pageSize.value };
+    if (filters.custType) params.custType = filters.custType;
+    if (filters.source) params.source = filters.source;
+    if (filters.grade) params.grade = filters.grade;
+    if (filters.check) params.check = filters.check;
+    const res: any = await api.leads.list(params);
+    leads.value = res?.rows || (Array.isArray(res) ? res : []);
+    total.value = res?.total ?? leads.value.length;
+  } finally {
+    tableLoading.value = false;
+  }
 };
 
 const reset = () => {
   Object.assign(filters, { custType: '', source: '', grade: '', check: '' });
+  page.value = 1; // 筛选变化回到第一页，避免停在越界页导致空列表
   load();
 };
 
+const auth = useAuthStore();
 const passedAll = (r: any) => r.check1 && r.check2 && r.check3;
+
+// 转客户归属当前登录用户（此前硬编码 u1，多用户环境下全部归到同一人）
+const currentAssignee = () => auth.user?.id || null;
 
 const convert = async (row: any) => {
   const passed = passedAll(row);
@@ -174,7 +213,7 @@ const convert = async (row: any) => {
     '转客户',
     { type: passed ? 'info' : 'warning' }
   );
-  const res = await api.leads.convert(row.id, { assignee: 'u1' });
+  const res = await api.leads.convert(row.id, { assignee: currentAssignee() });
   ElMessage.success(`已创建客户档案：${res.company.name}`);
   load();
 };
@@ -186,7 +225,7 @@ const batchConvert = async () => {
     : `批量转换 ${selected.value.length} 条线索为客户？`;
   await ElMessageBox.confirm(tip, '批量转客户', { type: failed ? 'warning' : 'info' });
   for (const r of selected.value) {
-    if (r.status !== 'converted') await api.leads.convert(r.id, { assignee: 'u1' });
+    if (r.status !== 'converted') await api.leads.convert(r.id, { assignee: currentAssignee() });
   }
   ElMessage.success('批量转换完成');
   load();

@@ -144,6 +144,11 @@ class CustomsService {
       if (!domain && r.email) domain = String(r.email).split('@')[1] || '';
       if (!domain) domain = inferDomain(importer);
 
+      // 去重：同域名或同名的海关记录已存在则跳过，避免重复导入产生重复线索
+      if (this.db.db.customsRecords?.some((x: any) => (domain && x.importerDomain === domain) || x.importer === importer)) {
+        continue;
+      }
+
       const rec: any = {
         id: this.db.genId('CR'),
         sourceKey: source.key,
@@ -260,10 +265,12 @@ class CustomsService {
         weightKg: Number(r[idx('NET_WT')] || 0),
       }))
       .filter((x) => x.country);
+    // ALL_VAL_YR 是「年度累计值」（每月一行，值递增至年末），逐行累加会把贸易额放大约 N 倍；
+    // 年度金额取最大值（即全年累计），净重为月度值才累加。
     const byC: Record<string, { country: string; valueYr: number; weightKg: number; months: number }> = {};
     for (const x of detail) {
       byC[x.country] = byC[x.country] || { country: x.country, valueYr: 0, weightKg: 0, months: 0 };
-      byC[x.country].valueYr += x.valueYr;
+      byC[x.country].valueYr = Math.max(byC[x.country].valueYr, x.valueYr);
       byC[x.country].weightKg += x.weightKg;
       byC[x.country].months += 1;
     }

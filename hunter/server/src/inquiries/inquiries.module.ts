@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Module, Injectable } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Headers, Module, Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { DbService } from '../db/db.service';
+import { Public } from '../auth/auth.guard';
 
 /** 询盘来源渠道：与数据看板「渠道贡献」共用同一套取值 */
 const CHANNELS = ['seo', 'ads', 'platform', 'email', 'referral'];
@@ -26,7 +27,7 @@ class InquiriesService {
       const kw = String(query.keyword).toLowerCase();
       rows = rows.filter((r: any) => String(r.attributedKeyword || '').toLowerCase().includes(kw));
     }
-    return rows
+    const mapped = rows
       .map((r: any) => ({
         ...r,
         companyName: r.companyId
@@ -35,6 +36,14 @@ class InquiriesService {
         overdue: r.status !== 'closed' && r.slaDeadline && r.slaDeadline < new Date().toISOString(),
       }))
       .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    // 可选分页：传 page/pageSize 时返回 { rows, total }，否则返回原数组（向后兼容）
+    const page = Number(query.page) || 0;
+    const pageSize = Number(query.pageSize) || 0;
+    if (page > 0 && pageSize > 0) {
+      const start = (page - 1) * pageSize;
+      return { rows: mapped.slice(start, start + pageSize), total: mapped.length, page, pageSize } as any;
+    }
+    return mapped;
   }
 
   stats() {
@@ -58,7 +67,8 @@ class InquiriesService {
   }
 
   create(body: any) {
-    if (!body.content) return { ok: false, message: '询盘内容必填' };
+    // 统一错误响应：改为抛 HTTP 异常，前端拦截器统一提示（原为 {ok:false} 与异常混用）
+    if (!body.content) throw new BadRequestException('询盘内容必填');
     const row = {
       id: this.db.genId('I'),
       companyId: body.companyId || null,
@@ -111,8 +121,36 @@ export class InquiriesController {
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
 }
 
+/**
+ * 公开接口：供独立站表单回传询盘（免登录，用站点密钥校验）。
+ * 密钥在「系统设置 → 独立站询盘回传」查看，请求头 x-site-key 携带。
+ */
+@Controller('public')
+export class PublicInquiryController {
+  constructor(private db: DbService, private svc: InquiriesService) {}
+
+  @Public()
+  @Post('inquiry')
+  create(@Body() b: any, @Headers('x-site-key') siteKey: string) {
+    const expected = (this.db.db as any)?.settings?.siteKey || '';
+    if (!expected || siteKey !== expected) {
+      throw new UnauthorizedException('站点密钥无效');
+    }
+    const content = String(b.content || '').trim();
+    if (!content) throw new BadRequestException('询盘内容（content）必填');
+    const row: any = this.svc.create({
+      content,
+      contactEmail: b.contactEmail || null,
+      sourceChannel: b.sourceChannel || 'seo',
+      attributedKeyword: b.attributedKeyword || null,
+      landingPage: b.landingPage || null,
+    });
+    return { ok: true, id: row.id };
+  }
+}
+
 @Module({
-  controllers: [InquiriesController],
+  controllers: [InquiriesController, PublicInquiryController],
   providers: [InquiriesService],
 })
 export class InquiriesModule {}

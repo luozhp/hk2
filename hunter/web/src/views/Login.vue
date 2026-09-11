@@ -52,7 +52,8 @@
         </el-form-item>
       </el-form>
 
-      <div class="demo-tip">
+      <!-- 演示账号仅在开发环境展示，避免生产环境泄露初始密码 -->
+      <div class="demo-tip" v-if="isDev">
         <el-icon><InfoFilled /></el-icon>
         <span>演示账号：sales@smileiceqi.com / Hunter@123（管理员：boss@smileiceqi.com）</span>
       </div>
@@ -73,6 +74,8 @@ const router = useRouter();
 const auth = useAuthStore();
 const loading = ref(false);
 const form = reactive({ email: '', password: '' });
+// 生产环境不展示演示账号（避免泄露初始密码）
+const isDev = import.meta.env.DEV;
 
 async function submit() {
   if (!form.email || !form.password) {

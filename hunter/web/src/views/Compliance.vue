@@ -5,12 +5,25 @@
       <template #header>
         <div class="card-header">
           <span>合规检查清单 <el-tag size="small" type="success">{{ doneCount }}/{{ checklist.length }} 已完成</el-tag></span>
+          <el-button size="small" text type="primary" @click="checklistDialog = true">
+            <el-icon style="vertical-align:-2px"><QuestionFilled /></el-icon>
+            说明
+          </el-button>
         </div>
       </template>
       <el-progress :percentage="Math.round((doneCount / Math.max(1, checklist.length)) * 100)" :stroke-width="12" style="margin-bottom:16px" />
       <el-row :gutter="12">
         <el-col :span="8" v-for="c in checklist" :key="c.key" style="margin-bottom:12px">
-          <div class="check-item" :class="{ done: c.done }" @click="toggle(c)">
+          <div
+            class="check-item"
+            :class="{ done: c.done }"
+            role="button"
+            tabindex="0"
+            :aria-pressed="c.done"
+            @click="toggle(c)"
+            @keydown.enter.prevent="toggle(c)"
+            @keydown.space.prevent="toggle(c)"
+          >
             <el-icon v-if="c.done" color="#67c23a" size="18"><CircleCheck /></el-icon>
             <el-icon v-else size="18"><CircleCheck /></el-icon>
             <div class="check-info">
@@ -38,7 +51,7 @@
               </div>
             </div>
           </template>
-          <el-table :data="docs" size="small">
+          <el-table :data="docs" v-loading="docsLoading" size="small">
             <el-table-column label="文档类型" width="100">
               <template #default="{ row }">
                 <el-tag size="small" effect="plain">{{ row.docType }}</el-tag>
@@ -80,7 +93,7 @@
           <el-alert
             title="全渠道（邮件/广告/落地页/社媒）统一扫描。禁止出现 recreational / whip gas 等吸食相关词汇，统一使用 culinary / foodservice / bakery / café 口径。"
             type="error" :closable="false" show-icon style="margin-bottom:12px" />
-          <el-table :data="words" size="small">
+          <el-table :data="words" v-loading="wordsLoading" size="small">
             <el-table-column prop="word" label="禁词" width="130">
               <template #default="{ row }"><span class="word">{{ row.word }}</span></template>
             </el-table-column>
@@ -138,6 +151,36 @@
         type="warning" :closable="false" show-icon style="margin-top:12px" />
     </el-dialog>
 
+    <!-- 合规检查清单说明 -->
+    <el-dialog v-model="checklistDialog" title="合规检查清单说明" width="780px" top="5vh">
+      <el-alert
+        title="这份清单把「合规」落成可勾选的动作项：文档库负责准备材料（MSDS / UN / DOT 等），禁词库负责把住口径，而检查清单负责确认这些内容真的落地到买家能看到的每个触点。按落地位置分为四类，逐项完成即可点亮进度。"
+        type="info" :closable="false" show-icon style="margin-bottom:12px" />
+      <el-collapse v-model="checklistActive" accordion>
+        <el-collapse-item v-for="g in checklistHelp" :key="g.module" :name="g.module">
+          <template #title>
+            <span style="display:flex;align-items:center;gap:8px">
+              <el-tag size="small" effect="plain">{{ g.module }}</el-tag>
+              {{ g.title }}
+            </span>
+          </template>
+          <el-descriptions :column="1" size="small" border>
+            <el-descriptions-item label="为什么重要">
+              <ul class="doc-list"><li v-for="(r, i) in g.reasons" :key="i">{{ r }}</li></ul>
+            </el-descriptions-item>
+            <el-descriptions-item label="检查项与判定标准">
+              <ul class="doc-list">
+                <li v-for="it in g.items" :key="it.label"><b>{{ it.label }}</b>：{{ it.rule }}</li>
+              </ul>
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-collapse-item>
+      </el-collapse>
+      <el-alert
+        title="使用提示：① 点击卡片即可勾选 / 取消，状态自动保存；② 进度条反映落地完成度，建议优先补齐未完成项；③ 新增合规要求时，先在这里登记为检查项，再逐条落实。"
+        type="warning" :closable="false" show-icon style="margin-top:12px" />
+    </el-dialog>
+
     <!-- 上传文档 -->
     <el-dialog v-model="docDialog" title="上传合规文档" width="520px">
       <el-form label-width="90px">
@@ -184,6 +227,8 @@ const docDialog = ref(false);
 const wordDialog = ref(false);
 const helpDialog = ref(false);
 const helpActive = ref('MSDS');
+const checklistDialog = ref(false);
+const checklistActive = ref('独立站');
 const docForm = reactive<any>({ docType: 'MSDS', name: '', version: 'v1.0', expireDate: '' });
 const wordForm = reactive<any>({ word: '', replacement: '' });
 
@@ -263,6 +308,57 @@ const docHelp = [
   },
 ];
 
+// 合规检查清单说明：按模块解释每项「为什么重要」与「判定标准」
+const checklistHelp = [
+  {
+    module: '独立站',
+    title: '买家访问官网 / 落地页时的信任与合规呈现',
+    reasons: [
+      '海外 B2B 买家下单前几乎都会先看官网，官网是判断「这家工厂是否靠谱」的第一依据。',
+      '合规文件公开可查，能显著降低询盘阶段的疑虑，提升询盘质量。',
+    ],
+    items: [
+      { label: '工厂介绍页（实拍/产能/年限）', rule: '有车间 / 产线实拍图、产能数据、经营年限，证明是真实工厂而非纯贸易商。' },
+      { label: 'MSDS、UN/DOT 证书展示', rule: '证书页对访客公开可查，采购与验厂人员可直接核验真伪与有效期。' },
+      { label: 'OEM/ODM 说明页', rule: '私标 / 贴牌买家能自助了解定制流程、起订量与周期，减少来回沟通。' },
+      { label: 'MOQ 与批量报价入口', rule: '批量买家可直接看到 MOQ 与询价入口，避免因信息缺失流失询盘。' },
+    ],
+  },
+  {
+    module: '邮件',
+    title: '首次触达即建立合规可信度',
+    reasons: [
+      '开发信是第一触点，附上合规文件链接能快速建立专业与可信形象。',
+      '正文避免合规敏感词，可降低被判垃圾邮件 / 违规的概率。',
+    ],
+    items: [
+      { label: '邮件均附 MSDS 与 UN-DOT 链接', rule: '开发信、报价邮件的正文或签名附合规文件链接，买家一键即可核实。' },
+    ],
+  },
+  {
+    module: '广告',
+    title: '防止违规投放与吸食流量',
+    reasons: [
+      '奶油发泡产品易被吸食人群的搜索词带偏，投放可能触发平台违规甚至下架。',
+      '提前用否定词过滤，既省预算又保证流量精准。',
+    ],
+    items: [
+      { label: '广告否定词已配置（whip charger/gas）', rule: 'Google Ads 已加入 whip charger、whip gas 等否定词，过滤吸食相关搜索。' },
+    ],
+  },
+  {
+    module: '内容',
+    title: '全渠道口径统一，规避合规红线',
+    reasons: [
+      '文案一旦出现吸食暗示，可能被平台判定违规，也会损害品牌专业形象。',
+      '统一使用食品餐饮用词，才能让产品稳定定位在「厨房 / 餐饮」场景。',
+    ],
+    items: [
+      { label: '全渠道文案使用 culinary/foodservice 口径', rule: '官网、邮件、广告、社媒统一使用 culinary、foodservice、bakery、café 等词，不使用 recreational 等吸食暗示。' },
+    ],
+  },
+];
+
 const doneCount = computed(() => checklist.value.filter((c) => c.done).length);
 
 const toggle = async (c: any) => {
@@ -309,8 +405,17 @@ const doScan = async () => {
   scanResult.value = await api.compliance.scan({ text: scanText.value });
 };
 
-const loadDocs = async () => { docs.value = await api.compliance.docs(); };
-const loadWords = async () => { words.value = await api.compliance.forbiddenWords(); };
+const docsLoading = ref(false);
+const wordsLoading = ref(false);
+
+const loadDocs = async () => {
+  docsLoading.value = true;
+  try { docs.value = await api.compliance.docs(); } finally { docsLoading.value = false; }
+};
+const loadWords = async () => {
+  wordsLoading.value = true;
+  try { words.value = await api.compliance.forbiddenWords(); } finally { wordsLoading.value = false; }
+};
 
 onMounted(async () => {
   checklist.value = await api.compliance.checklist();

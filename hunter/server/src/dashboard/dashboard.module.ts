@@ -1,6 +1,12 @@
 import { Controller, Get, Module, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
 
+/** 本地日期 YYYY-MM-DD（避免 UTC 日界导致日期判断偏差） */
+const todayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 @Injectable()
 class DashboardService {
   constructor(private db: DbService) {}
@@ -27,7 +33,12 @@ class DashboardService {
       mail: this.mailSummary(),
       tasks: d.tasks
         .filter((t) => t.status !== 'done')
-        .map((t) => ({ ...t, overdue: new Date(t.dueDate) < new Date() }))
+        // 只按日期比较：dueDate 为当天 00:00，若与 now 比较会导致"今天到期"全天被判逾期
+        .map((t) => {
+          const due = String(t.dueDate || '').slice(0, 10);
+          const today = todayKey();
+          return { ...t, overdue: !!due && due < today };
+        })
         .slice(0, 8),
     };
   }
@@ -45,7 +56,8 @@ class DashboardService {
     for (let i = 6; i >= 0; i--) {
       const day = new Date();
       day.setDate(day.getDate() - i);
-      const key = day.toISOString().slice(0, 10);
+      // 用本地日期而非 UTC：否则 UTC+8 的凌晨会把近 7 天整体偏移一天
+      const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
       const dayMails = records.filter((m) => m.sentAt.startsWith(key));
       week.push({ day: key.slice(5), sent: dayMails.length, replied: dayMails.filter((m) => m.status === 'replied').length });
     }

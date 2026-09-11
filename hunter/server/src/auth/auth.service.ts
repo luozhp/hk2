@@ -66,13 +66,15 @@ export class AuthService {
   /** 创建用户（管理员） */
   createUser(body: any) {
     if (!body.email || !body.name) throw new BadRequestException('邮箱与姓名为必填');
-    if (this.db.db.users.some((u: any) => u.email === body.email)) {
+    // 邮箱统一小写：否则可创建 A@x.com 与 a@x.com 两个账号，且后者永远登不上
+    const email = String(body.email || '').trim().toLowerCase();
+    if (this.db.db.users.some((u: any) => String(u.email || '').toLowerCase() === email)) {
       throw new BadRequestException('该邮箱已存在');
     }
     const user = {
       id: this.db.genId('U'),
       name: body.name,
-      email: body.email,
+      email,
       role: body.role || 'sales',
       status: 'active',
       passwordHash: bcrypt.hashSync(body.password || DEFAULT_PASSWORD, 10),

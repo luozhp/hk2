@@ -201,6 +201,7 @@
 import { ref, reactive, onMounted, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import api from '../api';
+import { useAuthStore } from '../stores/auth';
 
 const templates = ref<any[]>([]);
 const activeTemplate = ref<any>(null);
@@ -261,9 +262,15 @@ const openReply = async (r: any) => {
   replyDetail.value = r;
   replyVisible.value = true;
   if (!r.isRead) {
+    // 乐观更新：失败时回滚，避免 UI 与服务端状态不一致
     r.isRead = true;
     unreadReplies.value = Math.max(0, unreadReplies.value - 1);
-    await api.mail.markReplyRead(r.id);
+    try {
+      await api.mail.markReplyRead(r.id);
+    } catch {
+      r.isRead = false;
+      unreadReplies.value += 1;
+    }
   }
 };
 
@@ -290,15 +297,25 @@ const loadCandidates = async () => {
   }
 };
 
+const auth = useAuthStore();
+
 const send = async () => {
   if (!activeTemplate.value || !candidates.value.length) return ElMessage.warning('请选择模板与收件客户');
+  // 不再用 example.com 占位邮箱凑数：无邮箱客户直接跳过，避免真实发送产生硬退信
+  const noEmail = candidates.value.filter((c: any) => !c.email).length;
+  if (noEmail === candidates.value.length) {
+    return ElMessage.warning('所选客户均无邮箱，请先补全邮箱再发送');
+  }
+  if (noEmail) ElMessage.info(`${noEmail} 位客户缺少邮箱，已跳过（不会发送占位邮箱）`);
   // 传模板源码，由后端按每个收件人渲染（{{contactName}} 等变量自动替换，而非预览时写死的「John」）
   const res = await api.mail.send({
     templateId: activeTemplate.value.id,
     subject: activeTemplate.value.subject,
     body: activeTemplate.value.body,
-    recipients: candidates.value.map((c) => ({ companyId: c.id, contactId: null, email: c.email || `${c.name?.toLowerCase().replace(/\s+/g, '')}@example.com` })),
-    sender: 'u1',
+    recipients: candidates.value
+      .filter((c: any) => !!c.email)
+      .map((c: any) => ({ companyId: c.id, contactId: null, email: c.email })),
+    sender: auth.user?.id || null,
   });
   if (res.ok) {
     ElMessage.success(res.message);

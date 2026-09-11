@@ -13,6 +13,7 @@ import {
 import { HttpModule, HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DbService } from '../db/db.service';
+import { deriveEmail, searchWeb } from '../common/search';
 import { CurrentUser } from '../auth/auth.guard';
 
 interface DirectorySource {
@@ -264,12 +265,7 @@ const SERP_API_KEY = process.env.SERP_API_KEY || '';
 
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 
-function deriveEmail(domain: string): string | null {
-  if (!domain) return null;
-  const candidates = [`sales@${domain}`, `info@${domain}`, `contact@${domain}`];
-  for (const c of candidates) if (EMAIL_RE.test(c)) return c;
-  return null;
-}
+// deriveEmail 已抽取到 common/search（三个采集模块共用）
 
 function checkHasProduct(text: string, keyword: string): boolean {
   const k = (keyword || '').toLowerCase();
@@ -339,25 +335,37 @@ class DirectoryService {
     const mode = String(q?.mode || '').toLowerCase() === 'mock' ? 'mock' : DISCOVER_PROVIDER;
     const groups: any[] = [];
     const errors: string[] = [];
-    for (const src of DIRECTORY_SOURCES) {
-      const syntax = `"${keyword}" site:${src.site}`;
-      let raw: any[];
-      if (mode === 'mock' || !this.http) {
-        raw = MOCK_RESULTS;
-      } else {
-        try {
-          raw = await this.fetchLive(syntax, mode);
-        } catch (e: any) {
-          errors.push(`${src.name}：${e?.message || '搜索失败'}`);
-          continue;
-        }
+    // 分批并发（每批 5 个平台）：原实现为串行 20 次 HTTP，真实模式下极慢
+    const CONCURRENCY = 5;
+    for (let i = 0; i < DIRECTORY_SOURCES.length; i += CONCURRENCY) {
+      const batch = DIRECTORY_SOURCES.slice(i, i + CONCURRENCY);
+      const settled = await Promise.all(
+        batch.map(async (src) => {
+          const syntax = `"${keyword}" site:${src.site}`;
+          let raw: any[];
+          if (mode === 'mock' || !this.http) {
+            raw = MOCK_RESULTS;
+          } else {
+            try {
+              raw = await this.fetchLive(syntax, mode);
+            } catch (e: any) {
+              return { error: `${src.name}：${e?.message || '搜索失败'}` };
+            }
+          }
+          return {
+            group: {
+              platform: src.key,
+              sourceLabel: src.name,
+              syntax,
+              results: raw.map((r, idx) => this.scoreItem(r, idx, keyword, src, syntax)),
+            },
+          };
+        }),
+      );
+      for (const s of settled) {
+        if (s.error) errors.push(s.error);
+        else if (s.group) groups.push(s.group);
       }
-      groups.push({
-        platform: src.key,
-        sourceLabel: src.name,
-        syntax,
-        results: raw.map((r, i) => this.scoreItem(r, i, keyword, src, syntax)),
-      });
     }
     const results = groups.flatMap((g) => g.results);
     return { keyword, count: results.length, groups, results, errors };
@@ -408,8 +416,13 @@ class DirectoryService {
         try { domain = new URL(r.url).hostname.replace('www.', ''); } catch { /* ignore */ }
       }
       if (!domain && r.email) domain = String(r.email).split('@')[1] || '';
-      const email = r.email || deriveEmail(domain);
+      // 入库不猜测邮箱：只保留真实邮箱，避免后续把 sales@域名 这类推测地址真实发出造成硬退信
+      const email = r.email || null;
       const score = r.score ?? 72;
+      // 去重：同域名或同名的线索已存在则跳过，避免重复导入
+      if (this.db.db.leads.some((l: any) => (domain && l.domain === domain) || l.companyName === companyName)) {
+        continue;
+      }
       const lead: any = {
         id: this.db.genId('L'),
         companyName,
@@ -434,26 +447,9 @@ class DirectoryService {
     return { imported: created.length, leads: created };
   }
 
-  /** 真实定向搜索：优先 Google CSE，其次 SerpAPI */
+  // 真实定向搜索委托公共服务：discover / directory / expo 共用同一套实现与凭证判断
   private async fetchLive(syntax: string, mode: string) {
-    if (mode === 'google') {
-      const missing: string[] = [];
-      if (!GOOGLE_CSE_KEY) missing.push('GOOGLE_CSE_KEY');
-      if (!GOOGLE_CSE_CX) missing.push('GOOGLE_CSE_CX');
-      if (missing.length) throw new Error(`缺少凭证 ${missing.join('、')}，请在 server/.env 配置`);
-      const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CSE_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(syntax)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      return (res.data.items || []).map((it: any) => ({ url: it.link, title: it.title, desc: it.snippet || '', city: '' }));
-    }
-    if (mode === 'serp') {
-      if (!SERP_API_KEY) throw new Error('缺少凭证 SERP_API_KEY，请在 server/.env 配置');
-      const url = `https://serpapi.com/search.json?api_key=${SERP_API_KEY}&engine=google&q=${encodeURIComponent(syntax)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      return (res.data.organic_results || []).map((it: any) => ({
-        url: it.link, title: it.title, desc: it.snippet || '', city: it.city || '',
-      }));
-    }
-    throw new Error(`未知数据源 provider=${mode}，请在 server/.env 将 DISCOVER_PROVIDER 设为 google、serp 或 mock`);
+    return searchWeb(this.http, syntax, mode);
   }
 }
 

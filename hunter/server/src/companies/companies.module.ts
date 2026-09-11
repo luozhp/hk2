@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Query, Body, Param, Module, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
+import { requireString } from '../common/validate';
 
 @Injectable()
 class CompaniesService {
@@ -10,14 +11,38 @@ class CompaniesService {
     const { custType, level, owner, tag, keyword } = query;
     if (custType) rows = rows.filter((r) => r.custType === custType);
     if (level) rows = rows.filter((r) => r.level === level);
-    if (owner) rows = rows.filter((r) => r.owner === owner);
+    if (owner) {
+      // owner=none 表示「未分配负责人」，其余按负责人 id 精确匹配
+      rows = owner === 'none'
+        ? rows.filter((r) => !r.owner)
+        : rows.filter((r) => r.owner === owner);
+    }
     if (tag) rows = rows.filter((r) => (r.tags || []).includes(tag));
     if (keyword) rows = rows.filter((r) => (r.name + r.domain).toLowerCase().includes(keyword.toLowerCase()));
-    return rows.map((c) => {
-      const opps = this.db.db.opportunities.filter((o) => o.companyId === c.id);
-      const contacts = this.db.db.contacts.filter((ct) => ct.companyId === c.id);
-      return { ...c, oppCount: opps.length, contactCount: contacts.length };
+    // 先聚合成 Map 再映射，避免每家公司各扫一遍商机/联系人（原为 N+1）
+    const oppCount = new Map<string, number>();
+    this.db.db.opportunities.forEach((o: any) => {
+      oppCount.set(o.companyId, (oppCount.get(o.companyId) || 0) + 1);
     });
+    const contactCount = new Map<string, number>();
+    this.db.db.contacts.forEach((ct: any) => {
+      contactCount.set(ct.companyId, (contactCount.get(ct.companyId) || 0) + 1);
+    });
+    const total = rows.length;
+    // 可选分页：传 page/pageSize 时返回 { rows, total }，否则返回原数组（向后兼容旧调用）
+    const page = Number((query as any).page) || 0;
+    const pageSize = Number((query as any).pageSize) || 0;
+    const paged = page > 0 && pageSize > 0
+      ? rows.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize)
+      : rows;
+    const mapped = paged.map((c) => ({
+      ...c,
+      oppCount: oppCount.get(c.id) || 0,
+      contactCount: contactCount.get(c.id) || 0,
+    }));
+    return page > 0 && pageSize > 0
+      ? ({ rows: mapped, total, page, pageSize } as any)
+      : (mapped as any);
   }
 
   tags() {
@@ -39,8 +64,10 @@ class CompaniesService {
   }
 
   create(body: any) {
+    // 入参校验：公司名必填（此前缺 name 会创建无名客户）
+    const name = requireString(body.name, '公司名');
     const company = {
-      id: this.db.genId('C'), leadId: body.leadId || null, name: body.name, domain: body.domain,
+      id: this.db.genId('C'), leadId: body.leadId || null, name, domain: body.domain,
       website: body.website || (body.domain ? `https://${body.domain}` : null),
       email: body.email, phone: body.phone || null, address: body.address || null,
       city: body.city || null, state: body.state || null, country: body.country || 'US',
@@ -93,10 +120,14 @@ class CompaniesService {
   }
 
   addOpportunity(body: any) {
+    const stage = body.stage || 'inquiry';
+    const now = new Date().toISOString();
     const opp = {
-      id: this.db.genId('O'), companyId: body.companyId, stage: body.stage || 'inquiry',
-      title: body.title, amount: body.amount || 0, expectedDate: body.expectedDate || null,
-      source: body.source || 'manual', createdAt: new Date().toISOString(),
+      id: this.db.genId('O'), companyId: body.companyId, stage,
+      title: body.title, amount: Number(body.amount) || 0, expectedDate: body.expectedDate || null,
+      source: body.source || 'manual', createdAt: now,
+      // 记录成交时间，供「平均成交周期」KPI 使用
+      wonAt: stage === 'won' ? now : null,
     };
     this.db.db.opportunities.unshift(opp);
     this.db.save();
@@ -107,12 +138,20 @@ class CompaniesService {
     const opp = this.db.db.opportunities.find((o) => o.id === id);
     if (!opp) return null;
     const oldStage = opp.stage;
-    Object.assign(opp, body);
+    // 字段白名单：防止客户端篡改 id / companyId / createdAt
+    if (body.stage !== undefined) opp.stage = body.stage;
+    if (body.title !== undefined) opp.title = body.title;
+    if (body.amount !== undefined) opp.amount = Number(body.amount) || 0;
+    if (body.expectedDate !== undefined) opp.expectedDate = body.expectedDate;
+    if (body.source !== undefined) opp.source = body.source;
     if (oldStage !== opp.stage) {
+      const now = new Date().toISOString();
+      // 首次进入 won 时记录成交时间，供「平均成交周期」KPI 使用
+      if (opp.stage === 'won' && !opp.wonAt) opp.wonAt = now;
       this.db.db.activities.unshift({
         id: this.db.genId('A'), companyId: opp.companyId, contactId: null, type: 'note',
         content: `商机「${opp.title}」阶段变更：${oldStage} → ${opp.stage}`,
-        operator: 'u1', createdAt: new Date().toISOString(),
+        operator: 'u1', createdAt: now,
       });
     }
     this.db.save();

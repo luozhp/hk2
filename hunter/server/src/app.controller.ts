@@ -1,6 +1,6 @@
 import { Controller, Get, Post } from '@nestjs/common';
 import { DbService } from './db/db.service';
-import { Public } from './auth/auth.guard';
+import { Public, Roles } from './auth/auth.guard';
 
 @Controller()
 export class AppController {
@@ -12,7 +12,8 @@ export class AppController {
     return { status: 'ok', service: 'hunter-server', time: new Date().toISOString() };
   }
 
-  @Public()
+  // 整库重置属于高危操作：仅管理员可调用（此前为公开接口，任何人可清空数据）
+  @Roles('admin')
   @Post('reset')
   reset() {
     this.db.reset();

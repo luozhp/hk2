@@ -96,24 +96,31 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import * as echarts from 'echarts';
 import api from '../api';
+import { fmtMonthDay as formatDate } from '../utils/format';
 
 const loading = ref(false);
 const overview = ref<any>({ stats: {}, goals: { inquiry2026: { target: 100, current: 0 }, customer2028: { target: 20, current: 0 } }, mail: { week: [], replyRate: 0 }, tasks: [] });
 
 const goals = computed(() => overview.value.goals);
-const goalRate1 = computed(() => Math.min(100, Math.round((goals.value.inquiry2026.current / goals.value.inquiry2026.target) * 100)));
-const goalRate2 = computed(() => Math.min(100, Math.round((goals.value.customer2028.current / goals.value.customer2028.target) * 100)));
+// 数值兜底：后端缺字段或目标为 0 时不再出现 NaN / $NaNk
+const num = (v: any) => Number(v) || 0;
+const goalRate = (cur: any, target: any) => {
+  const t = Number(target) || 0;
+  return t > 0 ? Math.min(100, Math.round((num(cur) / t) * 100)) : 0;
+};
+const goalRate1 = computed(() => goalRate(goals.value.inquiry2026.current, goals.value.inquiry2026.target));
+const goalRate2 = computed(() => goalRate(goals.value.customer2028.current, goals.value.customer2028.target));
 const overallRate = computed(() => Math.round((goalRate1.value + goalRate2.value) / 2));
 const tasks = computed(() => overview.value.tasks || []);
 
 const statCards = computed(() => {
   const s = overview.value.stats;
   return [
-    { label: '有效线索', value: s.leads, color: '#409eff', bg: 'linear-gradient(135deg,#ecf5ff,#d9ecff)', icon: 'Collection' },
-    { label: '客户数', value: s.customers, color: '#67c23a', bg: 'linear-gradient(135deg,#f0f9eb,#e1f3d8)', icon: 'OfficeBuilding' },
-    { label: '询盘量', value: s.inquiries, color: '#e6a23c', bg: 'linear-gradient(135deg,#fdf6ec,#faecd8)', icon: 'ChatDotRound' },
-    { label: '进行中商机', value: s.opportunities, color: '#f56c6c', bg: 'linear-gradient(135deg,#fef0f0,#fde2e2)', icon: 'Suitcase' },
-    { label: '商机金额', value: '$' + (s.pipelineAmount / 1000).toFixed(0) + 'k', color: '#606266', bg: 'linear-gradient(135deg,#f4f4f5,#e8e8eb)', icon: 'Money' },
+    { label: '有效线索', value: num(s.leads), color: '#409eff', bg: 'linear-gradient(135deg,#ecf5ff,#d9ecff)', icon: 'Collection' },
+    { label: '客户数', value: num(s.customers), color: '#67c23a', bg: 'linear-gradient(135deg,#f0f9eb,#e1f3d8)', icon: 'OfficeBuilding' },
+    { label: '询盘量', value: num(s.inquiries), color: '#e6a23c', bg: 'linear-gradient(135deg,#fdf6ec,#faecd8)', icon: 'ChatDotRound' },
+    { label: '进行中商机', value: num(s.opportunities), color: '#f56c6c', bg: 'linear-gradient(135deg,#fef0f0,#fde2e2)', icon: 'Suitcase' },
+    { label: '商机金额', value: '$' + (num(s.pipelineAmount) / 1000).toFixed(0) + 'k', color: '#606266', bg: 'linear-gradient(135deg,#f4f4f5,#e8e8eb)', icon: 'Money' },
   ];
 });
 
@@ -156,10 +163,7 @@ const statusMap: Record<string, string> = {
   done: '已完成',
 };
 
-const formatDate = (d: string) => {
-  if (!d) return '';
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(d));
-};
+// 日期格式化已收敛到 utils/format（fmtMonthDay），避免各页面重复实现
 
 const chartRef = ref<HTMLElement>();
 let chart: echarts.ECharts | null = null;

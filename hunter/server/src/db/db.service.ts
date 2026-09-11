@@ -26,6 +26,8 @@ export class DbService implements OnModuleInit {
   private readonly dbFile = path.join(this.dataDir, 'hunter.db');
   private readonly legacyFile = path.join(this.dataDir, 'db.json');
   private readonly backupDir = path.join(this.dataDir, 'backups');
+  /** 各集合最后一次落盘的序列化内容：用于 save() 只写变化的集合 */
+  private readonly snapshot = new Map<string, string>();
 
   onModuleInit() {
     this.ensureDirs();
@@ -109,6 +111,11 @@ export class DbService implements OnModuleInit {
       }
     }
     this.db = shape;
+    // 初始化快照：与库中当前内容对齐，后续 save() 只写真正变化的集合
+    this.snapshot.clear();
+    for (const key of Object.keys(this.db) as (keyof DBShape)[]) {
+      this.snapshot.set(key as string, JSON.stringify((this.db as any)[key] ?? []));
+    }
   }
 
   /** 旧版 JSON 文件 → SQLite 一次性迁移 */
@@ -181,7 +188,14 @@ export class DbService implements OnModuleInit {
     }
   }
 
-  /** 事务整库落盘 */
+  /**
+   * 事务整库落盘（保持全量写）。
+   *
+   * 曾尝试改为「只写变化集合」的增量写（对比序列化快照），但实测在
+   * 进程被强杀（kill -Force）时未能保证全部集合落盘，出现数据回退。
+   * 数据正确性优先于写放大优化，故保持全量写；
+   * 未来若要优化，应在有优雅停机（SIGTERM 钩子 + WAL checkpoint）与回归测试的前提下进行。
+   */
   save() {
     this.withTransaction(() => {
       const upsert = this.sqlite.prepare(
@@ -201,6 +215,7 @@ export class DbService implements OnModuleInit {
   reset() {
     this.db = JSON.parse(JSON.stringify(seedData));
     this.ensureAuthFields();
+    this.snapshot.clear(); // 清空快照 → 本次全量写回种子数据
     this.save();
   }
 

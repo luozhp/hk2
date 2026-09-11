@@ -2,6 +2,7 @@ import { Controller, Get, Query, Module, Injectable, Optional } from '@nestjs/co
 import { HttpModule, HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DbService } from '../db/db.service';
+import { deriveEmail, searchWeb } from '../common/search';
 
 const SYNTAX_PRESETS = [
   { id: 'S1', name: '食品服务分销商', syntax: '"cream charger" OR "cream whipper" foodservice distributor site:.us -alibaba -amazon' },
@@ -30,14 +31,7 @@ const PRODUCT_HINTS = ['cream charger', 'cream whipper', 'whipped cream charger'
 // 真实邮箱格式校验（排除 info@/sales@ 等通用但要求 domain 与站点一致）
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
 
-function deriveEmail(domain: string): string | null {
-  if (!domain) return null;
-  const candidates = [`sales@${domain}`, `info@${domain}`, `contact@${domain}`];
-  for (const c of candidates) {
-    if (EMAIL_RE.test(c)) return c;
-  }
-  return null;
-}
+// deriveEmail 已抽取到 common/search（三个采集模块共用）
 
 // 用真实页面文本/摘要判定是否在售同类（check1）
 function checkHasProduct(text: string): boolean {
@@ -132,44 +126,9 @@ class DiscoverService {
     });
   }
 
-  // 真实搜索：优先 Google Custom Search JSON API，其次 SerpAPI
+  // 真实搜索委托给公共服务：discover / directory / expo 共用同一套实现与凭证判断
   private async fetchLive(syntax: string, mode: string) {
-    if (mode === 'google') {
-      const missing: string[] = [];
-      if (!GOOGLE_CSE_KEY) missing.push('GOOGLE_CSE_KEY');
-      if (!GOOGLE_CSE_CX) missing.push('GOOGLE_CSE_CX');
-      if (missing.length) {
-        throw new Error(`缺少真实搜索凭证：请在 server/.env 配置 ${missing.join('、')}（获取方式见页面“获取凭证”说明）`);
-      }
-      const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CSE_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(syntax)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      const items = res.data.items || [];
-      return items.map((it: any) => {
-        const domain = (() => { try { return new URL(it.link).hostname.replace('www.', ''); } catch { return ''; } })();
-        return {
-          url: it.link, title: it.title, desc: it.snippet || '',
-          city: '', address: '',
-          email: deriveEmail(domain),
-        };
-      });
-    }
-    if (mode === 'serp') {
-      if (!SERP_API_KEY) {
-        throw new Error('缺少真实搜索凭证：请在 server/.env 配置 SERP_API_KEY（获取方式见页面“获取凭证”说明）');
-      }
-      const url = `https://serpapi.com/search.json?api_key=${SERP_API_KEY}&engine=google&q=${encodeURIComponent(syntax)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      const items = res.data.organic_results || [];
-      return items.map((it: any) => {
-        const domain = (() => { try { return new URL(it.link).hostname.replace('www.', ''); } catch { return ''; } })();
-        return {
-          url: it.link, title: it.title, desc: it.snippet || '',
-          city: it.city || '', address: it.address || '',
-          email: deriveEmail(domain),
-        };
-      });
-    }
-    throw new Error(`未知数据源 provider=${mode}：请在 server/.env 将 DISCOVER_PROVIDER 设为 google、serp 或 mock`);
+    return searchWeb(this.http, syntax, mode);
   }
 }
 

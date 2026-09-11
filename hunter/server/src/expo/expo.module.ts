@@ -15,6 +15,8 @@ import {
 import { HttpModule, HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { DbService } from '../db/db.service';
+import { Roles } from '../auth/auth.guard';
+import { deriveEmail, searchWeb as searchWebPublic } from '../common/search';
 
 export interface ExpoFair {
   id: string;
@@ -52,12 +54,7 @@ const GOOGLE_CSE_CX = process.env.GOOGLE_CSE_CX || '';
 const SERP_API_KEY = process.env.SERP_API_KEY || '';
 
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i;
-function deriveEmail(domain: string): string | null {
-  if (!domain) return null;
-  const candidates = [`sales@${domain}`, `info@${domain}`, `contact@${domain}`];
-  for (const c of candidates) if (EMAIL_RE.test(c)) return c;
-  return null;
-}
+// deriveEmail 已抽取到 common/search（三个采集模块共用）
 
 // 各展会预置示例展商（模拟模式返回，真实模式由搜索引擎结果覆盖）
 const MOCK_EXHIBITORS: Record<string, any[]> = {
@@ -331,8 +328,13 @@ class ExpoService {
         }
       }
       if (!domain && r.email) domain = String(r.email).split('@')[1] || '';
-      const email = r.email || deriveEmail(domain);
+      // 入库不猜测邮箱：只保留真实邮箱，避免后续把 sales@域名 这类推测地址真实发出造成硬退信
+      const email = r.email || null;
       const score = r.score ?? 72;
+      // 去重：同域名或同名的线索已存在则跳过
+      if (this.db.db.leads.some((l: any) => (domain && l.domain === domain) || l.companyName === companyName)) {
+        continue;
+      }
       const lead: any = {
         id: this.db.genId('L'),
         companyName,
@@ -375,26 +377,14 @@ class ExpoService {
     }
   }
 
-  /** 通用网页搜索：优先 Google CSE，其次 SerpAPI（复用线索采集凭证） */
+  /**
+   * 通用网页搜索委托公共服务（common/search），
+   * 再把公共返回（url/desc）转换为本模块内部契约（title/link/snippet），
+   * 保证 fetchLive 与「发现展会」的既有行为不变。
+   */
   private async searchWeb(query: string, mode: string) {
-    if (mode === 'google') {
-      const missing: string[] = [];
-      if (!GOOGLE_CSE_KEY) missing.push('GOOGLE_CSE_KEY');
-      if (!GOOGLE_CSE_CX) missing.push('GOOGLE_CSE_CX');
-      if (missing.length) throw new Error(`缺少凭证 ${missing.join('、')}，请在 server/.env 配置`);
-      const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CSE_KEY}&cx=${GOOGLE_CSE_CX}&q=${encodeURIComponent(query)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      const items = res.data.items || [];
-      return items.map((it: any) => ({ title: it.title, link: it.link, snippet: it.snippet || '' }));
-    }
-    if (mode === 'serp') {
-      if (!SERP_API_KEY) throw new Error('缺少凭证 SERP_API_KEY，请在 server/.env 配置');
-      const url = `https://serpapi.com/search.json?api_key=${SERP_API_KEY}&engine=google&q=${encodeURIComponent(query)}&num=10`;
-      const res = await firstValueFrom(this.http.get(url));
-      const items = res.data.organic_results || [];
-      return items.map((it: any) => ({ title: it.title, link: it.link, snippet: it.snippet || '' }));
-    }
-    throw new Error(`未知数据源 provider=${mode}：请在 server/.env 将 DISCOVER_PROVIDER 设为 google、serp 或 mock`);
+    const items = await searchWebPublic(this.http, query, mode);
+    return items.map((it: any) => ({ title: it.title, link: it.url, snippet: it.desc || '' }));
   }
 
   /** 真实拉取：以展会官网域名限定，检索参展商 / 展商主页 */
@@ -427,12 +417,16 @@ export class ExpoController {
   @Get('fairs') fairs() {
     return this.svc.fairs();
   }
+  // 展会清单增删改属运营配置：仅管理员 / 运营专员可写，业务员只读
+  @Roles('admin', 'operator')
   @Post('fairs') createFair(@Body() b: any) {
     return this.svc.createFair(b);
   }
+  @Roles('admin', 'operator')
   @Put('fairs/:id') updateFair(@Param('id') id: string, @Body() b: any) {
     return this.svc.updateFair(id, b);
   }
+  @Roles('admin', 'operator')
   @Delete('fairs/:id') deleteFair(@Param('id') id: string) {
     return this.svc.deleteFair(id);
   }

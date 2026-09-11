@@ -85,8 +85,10 @@ class AnalyticsService {
       won.forEach((o: any) => {
         const company = (d.companies || []).find((c: any) => c.id === o.companyId);
         const from = this.firstTouchAt(company);
-        if (!from || !o.createdAt) return;
-        const days = (new Date(o.createdAt).getTime() - new Date(from).getTime()) / 86400000;
+        // 成交时间优先取阶段变为 won 时记录的 wonAt，无则回退商机创建时间
+        const to = o.wonAt || o.createdAt;
+        if (!from || !to) return;
+        const days = (new Date(to).getTime() - new Date(from).getTime()) / 86400000;
         if (days >= 0) spans.push(days);
       });
       if (spans.length) {

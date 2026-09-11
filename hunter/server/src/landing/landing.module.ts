@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Module, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
+import { Roles } from '../auth/auth.guard';
 
 /**
  * 落地页清单（F-E-03 精简版）：
@@ -77,8 +78,12 @@ export class LandingController {
   constructor(private svc: LandingService) {}
 
   @Get() list() { return this.svc.list(); }
+  // 落地页清单属运营配置：仅管理员 / 运营专员可写，业务员只读
+  @Roles('admin', 'operator')
   @Post() add(@Body() b: any) { return this.svc.add(b); }
+  @Roles('admin', 'operator')
   @Put(':id') update(@Param('id') id: string, @Body() b: any) { return this.svc.update(id, b); }
+  @Roles('admin', 'operator')
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
 }
 

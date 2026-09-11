@@ -31,6 +31,7 @@ const router = createRouter({
         { path: 'expos', name: 'expos', component: () => import('../views/Expos.vue'), meta: { title: '国际专业展会' } },
         { path: 'analytics', name: 'analytics', component: () => import('../views/Analytics.vue'), meta: { title: '数据看板' } },
         { path: 'settings', name: 'settings', component: () => import('../views/Settings.vue'), meta: { title: '系统设置' } },
+        { path: ':pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFound.vue'), meta: { title: '页面不存在' } },
       ],
     },
   ],

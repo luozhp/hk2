@@ -1,11 +1,40 @@
 import { Controller, Get, Post, Query, Body, Param, Module, Injectable, Res } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as nodemailer from 'nodemailer';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { DbService } from '../db/db.service';
 import { Public } from '../auth/auth.guard';
 
-const DAILY_SEND_LIMIT = 50;
+const DAILY_SEND_LIMIT = Number(process.env.MAIL_DAILY_LIMIT || 50) || 50;
+
+/** 本地日期 YYYY-MM-DD（避免 UTC 日界让东八区提前重置额度） */
+const todayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// 合规文档存放目录：邮件附件只能取自此处，防止 publicLink 被指向服务器任意文件
+const DOCS_DIR = path.join(__dirname, '..', '..', 'data', 'docs');
+
+/**
+ * 是否可发送：过滤占位邮箱（example.com 等）与格式非法的地址。
+ * 真实 SMTP 下把占位地址发出会产生大量硬退信，直接损伤发件域名信誉。
+ */
+const PLACEHOLDER_DOMAINS = ['example.com', 'example.org', 'test.com', 'localhost'];
+const isSendableEmail = (v: any): boolean => {
+  const email = String(v || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+  const domain = email.split('@')[1] || '';
+  return !PLACEHOLDER_DOMAINS.includes(domain);
+};
+const resolveDocFile = (link: string): string | null => {
+  const rel = String(link || '').replace(/^\/+/, '');
+  if (!rel || rel.includes('..') || /^[a-zA-Z]:/.test(rel) || path.isAbsolute(rel)) return null;
+  const file = path.join(DOCS_DIR, rel);
+  return fs.existsSync(file) ? file : null;
+};
 
 // 打开追踪像素的公网地址（形如 https://your-server.com），留空则不启用打开追踪
 const MAIL_TRACK_BASE_URL = (process.env.MAIL_TRACK_BASE_URL || '').replace(/\/+$/, '');
@@ -45,7 +74,15 @@ class MailService {
   records(query: any) {
     let rows = [...this.db.db.mailRecords];
     if (query.status) rows = rows.filter((r) => r.status === query.status);
-    return rows.sort((a, b) => b.sentAt.localeCompare(a.sentAt));
+    const sorted = rows.sort((a, b) => b.sentAt.localeCompare(a.sentAt));
+    // 可选分页：传 page/pageSize 时返回 { rows, total }，否则返回原数组（向后兼容）
+    const page = Number(query.page) || 0;
+    const pageSize = Number(query.pageSize) || 0;
+    if (page > 0 && pageSize > 0) {
+      const start = (page - 1) * pageSize;
+      return { rows: sorted.slice(start, start + pageSize), total: sorted.length, page, pageSize } as any;
+    }
+    return sorted;
   }
 
   stats() {
@@ -53,7 +90,7 @@ class MailService {
     const total = rows.length;
     const opened = rows.filter((r) => r.status === 'opened' || r.status === 'replied').length;
     const replied = rows.filter((r) => r.status === 'replied').length;
-    const sentToday = rows.filter((r) => r.sentAt.startsWith(new Date().toISOString().slice(0, 10))).length;
+    const sentToday = rows.filter((r) => r.sentAt.startsWith(todayKey())).length;
     return {
       total, opened, replied,
       delivered: rows.filter((r) => ['opened', 'replied', 'delivered'].includes(r.status)).length,
@@ -98,9 +135,26 @@ class MailService {
     if (!check.ok) {
       return { ok: false, message: `发送已拦截：${check.message}`, blocked: true, hits: check.hits };
     }
+    // 过滤不可发送的地址（占位邮箱 / 格式非法）：避免真实通道下大量硬退信损伤域名信誉
+    const allRecipients: any[] = Array.isArray(body.recipients) ? body.recipients : [body];
+    const recipients = allRecipients.filter((r: any) => isSendableEmail(r?.email || r?.to));
+    if (!recipients.length) {
+      return {
+        ok: false,
+        blocked: true,
+        message: allRecipients.length
+          ? `没有可发送的有效邮箱（${allRecipients.length} 位客户缺少邮箱或为占位邮箱），请先补全邮箱`
+          : '请至少选择一位收件人',
+      };
+    }
+    // 日限额按「本次收件人数」校验：修复"剩 1 封额度也能一次批量发上百封"的绕过问题
     const stats = this.stats();
-    if (stats.remainingToday <= 0) {
-      return { ok: false, message: '今日发送配额已达上限（50 封），请明日再发或更换账号', blocked: true };
+    if (stats.remainingToday < recipients.length) {
+      return {
+        ok: false,
+        blocked: true,
+        message: `今日剩余配额 ${stats.remainingToday} 封，本次需发送 ${recipients.length} 封，请减少收件人或明日再发（日上限 ${stats.dailyLimit} 封）`,
+      };
     }
     // 真实通道但未配置凭证：给出友好提示，不崩溃
     if (MAIL_PROVIDER !== 'mock' && (!MAIL_SMTP_HOST || !MAIL_SMTP_USER || !MAIL_SMTP_PASS)) {
@@ -110,7 +164,6 @@ class MailService {
       };
     }
 
-    const recipients = Array.isArray(body.recipients) ? body.recipients : [body];
     const template = body.templateId ? this.db.db.mailTemplates.find((t) => t.id === body.templateId) : null;
 
     // 按收件人生成个性化称呼（优先收件人联系人姓名，其次匹配邮箱的联系人，最后取公司首个联系人）
@@ -141,8 +194,12 @@ class MailService {
       return { subj, text };
     };
 
-    const attaches = (check.attachDocs || []).map((link: string) => ({ filename: link.split('/').pop() || 'doc', path: link }));
-    const created = recipients.map((r: any) => {
+    // 附件安全：只附加固定目录内真实存在的文件，非法或不存在的 publicLink 直接跳过
+    const attaches = (check.attachDocs || [])
+      .map((link: string) => resolveDocFile(link))
+      .filter(Boolean)
+      .map((file) => ({ filename: path.basename(file as string), path: file as string }));
+    const created: any[] = recipients.map((r: any) => {
       const rendered = template
         ? renderFor(r, template.subject, template.body)
         : { subj: body.subject || 'Food-grade N2O Cream Charger Wholesale', text: body.body || '' };

@@ -11,24 +11,32 @@
 
 ```
 hunter/
-├── server/            # NestJS 后端（端口 3000）
+├── server/            # NestJS 后端（端口 3010）
 │   ├── src/
-│   │   ├── db/        # SQLite 持久化层（事务落盘 + 自动备份 + 旧 JSON 迁移）
-│   │   ├── auth/      # JWT 认证：登录 / 改密 / 成员管理（角色权限）
-│   │   ├── leads/     # 线索管理
-│   │   ├── discover/  # 线索采集（Google/SerpAPI 或模拟）
-│   │   ├── companies/ # 客户/联系人/商机/时间线
-│   │   ├── mail/      # 邮件模板/发送/记录（含禁词拦截、频控）
-│   │   ├── compliance/# 合规文档库/禁词库
-│   │   ├── keywords/  # 关键词库/否定词库
-│   │   ├── analytics/ # 看板与漏斗
-│   │   └── dashboard/ # 工作台
+│   │   ├── db/          # SQLite 持久化层（事务落盘 + 自动备份 + 旧 JSON 迁移）
+│   │   ├── auth/        # JWT 认证：登录 / 改密 / 成员管理（角色权限）
+│   │   ├── leads/       # 线索管理（筛选 / 评分 / 导入 / 转客户）
+│   │   ├── discover/    # 线索采集（Google CSE / SerpAPI / 模拟）
+│   │   ├── companies/   # 客户 / 联系人 / 商机 / 时间线
+│   │   ├── mail/        # 邮件模板 / 发送 / 记录 / 回信（禁词拦截、频控、追踪像素）
+│   │   ├── compliance/  # 合规文档库 / 禁词库 / 文案扫描 / 检查清单
+│   │   ├── keywords/    # 关键词库 / 否定词库
+│   │   ├── landing/     # 独立站落地页清单
+│   │   ├── inquiries/   # 询盘管理与归因（含独立站公开回传 /public/inquiry）
+│   │   ├── analytics/   # 数据看板（漏斗 / 渠道 / KPI）
+│   │   ├── dashboard/   # 工作台
+│   │   ├── maintenance/ # 客户维护档案与跟进动态
+│   │   ├── customs/     # 海关数据（导入 + US Census 在线统计）
+│   │   ├── directory/   # 行业平台（B2B 目录定向搜索 / 排序）
+│   │   ├── expo/        # 国际展会（清单 / 展商拉取 / 发现展会）
+│   │   └── settings/    # 系统配置（独立站域名、站点密钥等）
 │   └── data/          # 运行时数据（hunter.db + backups/ 自动备份）
 └── web/               # Vue3 前端（开发端口 5173 / 生产 nginx 80）
     └── src/
-        ├── layouts/   # 主框架（含登录守卫、改密）
+        ├── api/       # axios 封装 + 接口封装 + 业务字典
+        ├── layouts/   # 主框架（侧边栏 + 改密）
         ├── stores/    # Pinia（认证态）
-        └── views/     # 10 个核心页面 + 登录页
+        └── views/     # 16 个业务页面 + 登录页 + 404 页
 ```
 
 ## 快速启动（开发）
@@ -45,7 +53,7 @@ cd server && npm install && npm run start:dev
 cd web && npm install && npm run dev
 ```
 
-- 后端 API：http://localhost:3000/api/health
+- 后端 API：http://localhost:3010/api/health
 - 前端页面：http://localhost:5173 （已配置 /api 代理到后端）
 
 ### 默认账号

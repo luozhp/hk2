@@ -237,8 +237,21 @@ const checkLabel = (k: string | number) => ({ check1: '①在售同类', check2:
 
 const gradeType = (g: string) => ({ A: 'success', B: 'warning', C: 'info' } as any)[g];
 
+const CUSTOM_SYNTAX_KEY = 'hunter_custom_syntax';
+
 const loadPresets = async () => {
   presets.value = await api.discover.presets();
+  // 合并本地保存的自定义语法（此前只存内存，刷新即丢却提示"已保存"）
+  try {
+    const raw = localStorage.getItem(CUSTOM_SYNTAX_KEY);
+    if (raw) {
+      const custom = JSON.parse(raw);
+      if (Array.isArray(custom) && custom.length) {
+        const known = new Set(presets.value.map((p: any) => p.id));
+        presets.value = [...presets.value, ...custom.filter((c: any) => !known.has(c.id))];
+      }
+    }
+  } catch { /* 忽略损坏的本地数据 */ }
   const first = presets.value[0];
   if (first) { activeSyntax.value = first.id; syntax.value = first.syntax; }
   try {
@@ -261,18 +274,25 @@ const selectPreset = (p: any) => {
 const execute = async () => {
   if (!syntax.value) return ElMessage.warning('请输入搜索语法');
   searching.value = true;
-  const resp: any = await api.discover.execute({ syntax: syntax.value, mode: mode.value });
-  let list = resp;
-  if (resp && resp.data) { // 降级结构 { degraded, reason, data }
-    ElMessage.warning('真实搜索失败，已降级为模拟数据。' + (resp.reason || ''));
-    list = resp.data;
+  try {
+    const resp: any = await api.discover.execute({ syntax: syntax.value, mode: mode.value });
+    let list = resp;
+    if (resp && resp.data) { // 降级结构 { degraded, reason, data }
+      ElMessage.warning('真实搜索失败，已降级为模拟数据。' + (resp.reason || ''));
+      list = resp.data;
+    }
+    results.value = list || [];
+    Object.keys(checkedMap).forEach((k) => delete checkedMap[k]);
+    selectedIds.value = new Set();
+    selectAll.value = false;
+    if (!results.value.length) ElMessage.info('无搜索结果');
+  } catch {
+    // 接口失败必须复位 loading，否则按钮永久卡在加载中
+    results.value = [];
+    ElMessage.error('搜索失败，请稍后重试');
+  } finally {
+    searching.value = false;
   }
-  results.value = list || [];
-  Object.keys(checkedMap).forEach((k) => delete checkedMap[k]);
-  selectedIds.value = new Set();
-  selectAll.value = false;
-  searching.value = false;
-  if (!results.value.length) ElMessage.info('无搜索结果');
 };
 
 const toggleAll = (val: boolean) => {
@@ -288,11 +308,21 @@ const syncSelected = () => {
   selectAll.value = selectedIds.value.size === results.value.length;
 };
 
+/** 安全解析主机名：真实搜索返回的 url 可能非法，避免 new URL 抛错中断入库 */
+const safeHost = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
 const quickAdd = async (r: any) => {
+  const host = safeHost(r.url);
   await api.leads.create({
     companyName: r.title.split('|')[0].trim(),
-    domain: new URL(r.url).hostname.replace('www.', ''),
-    email: r.hasEmail ? 'sales@' + new URL(r.url).hostname.replace('www.', '') : null,
+    domain: host,
+    email: r.hasEmail && host ? 'sales@' + host : null,
     source: 'google', sourceNote: '采集页单条入库',
     check1: r.checks.check1, check2: r.checks.check2, check3: r.checks.check3,
     score: r.score, custType: 'importer',
@@ -302,14 +332,17 @@ const quickAdd = async (r: any) => {
 
 const importSelected = async () => {
   await ElMessageBox.confirm(`确认将 ${selected.value.length} 条线索校验并入库？`, '批量入库', { type: 'info' });
-  const items = selected.value.map((r: any) => ({
-    companyName: r.title.split('|')[0].trim(),
-    domain: new URL(r.url).hostname.replace('www.', ''),
-    email: r.hasEmail ? 'sales@' + new URL(r.url).hostname.replace('www.', '') : null,
-    source: 'google', sourceNote: '采集页批量入库',
-    check1: r.checks.check1, check2: r.checks.check2, check3: r.checks.check3,
-    score: r.score, custType: 'importer',
-  }));
+  const items = selected.value.map((r: any) => {
+    const host = safeHost(r.url);
+    return {
+      companyName: r.title.split('|')[0].trim(),
+      domain: host,
+      email: r.hasEmail && host ? 'sales@' + host : null,
+      source: 'google', sourceNote: '采集页批量入库',
+      check1: r.checks.check1, check2: r.checks.check2, check3: r.checks.check3,
+      score: r.score, custType: 'importer',
+    };
+  });
   const res = await api.leads.import({ items });
   ElMessage.success(`成功入库 ${res.imported} 条线索`);
   results.value = [];
@@ -319,7 +352,13 @@ const openSyntaxDialog = () => { form.name = ''; form.syntax = ''; syntaxDialog.
 
 const saveSyntax = async () => {
   if (!form.syntax) return ElMessage.warning('请输入语法');
-  presets.value.push({ id: 'S_' + Date.now(), name: form.name || '自定义语法', syntax: form.syntax });
+  const preset = { id: 'S_' + Date.now(), name: form.name || '自定义语法', syntax: form.syntax };
+  presets.value.push(preset);
+  // 持久化自定义语法（用户资产），刷新后仍可用
+  try {
+    const custom = presets.value.filter((p: any) => String(p.id).startsWith('S_'));
+    localStorage.setItem(CUSTOM_SYNTAX_KEY, JSON.stringify(custom));
+  } catch { /* 忽略存储失败 */ }
   syntax.value = form.syntax;
   syntaxDialog.value = false;
   ElMessage.success('已保存，可直接执行');

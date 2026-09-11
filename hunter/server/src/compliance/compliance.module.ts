@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Module, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
+import { Roles } from '../auth/auth.guard';
 
 @Injectable()
 class ComplianceService {
@@ -27,7 +28,18 @@ class ComplianceService {
   updateDoc(id: string, body: any) {
     const doc = this.db.db.complianceDocs.find((d) => d.id === id);
     if (!doc) return null;
-    Object.assign(doc, body);
+    // 字段白名单：防止客户端篡改 id / createdAt 等标识字段
+    if (body.docType !== undefined) doc.docType = body.docType;
+    if (body.name !== undefined) doc.name = body.name;
+    if (body.version !== undefined) doc.version = body.version;
+    if (body.expireDate !== undefined) doc.expireDate = body.expireDate;
+    // publicLink 安全校验：仅允许站内相对路径或 http(s) 链接，
+    // 禁止盘符/绝对路径/上级目录，避免邮件把它当附件路径造成服务器文件外泄
+    if (body.publicLink !== undefined) {
+      const link = String(body.publicLink).trim();
+      const safe = /^(https?:\/\/|\/)/.test(link) && !link.includes('..') && !/^[a-zA-Z]:/.test(link);
+      if (safe) doc.publicLink = link;
+    }
     this.db.save();
     return doc;
   }
@@ -79,11 +91,17 @@ class ComplianceService {
 export class ComplianceController {
   constructor(private svc: ComplianceService) {}
   @Get('docs') docs() { return this.svc.docs(); }
+  // 合规文档与禁词库属运营配置：仅管理员 / 运营专员可写，业务员只读
+  @Roles('admin', 'operator')
   @Post('docs') addDoc(@Body() b: any) { return this.svc.addDoc(b); }
+  @Roles('admin', 'operator')
   @Put('docs/:id') updateDoc(@Param('id') id: string, @Body() b: any) { return this.svc.updateDoc(id, b); }
+  @Roles('admin', 'operator')
   @Delete('docs/:id') removeDoc(@Param('id') id: string) { return this.svc.removeDoc(id); }
   @Get('forbidden-words') forbiddenWords() { return this.svc.forbiddenWords(); }
+  @Roles('admin', 'operator')
   @Post('forbidden-words') addForbiddenWord(@Body() b: any) { return this.svc.addForbiddenWord(b); }
+  @Roles('admin', 'operator')
   @Delete('forbidden-words/:id') removeForbiddenWord(@Param('id') id: string) { return this.svc.removeForbiddenWord(id); }
   @Post('scan') scan(@Body() b: any) { return this.svc.scan(b); }
   @Get('checklist') checklist() { return this.svc.checklist(); }

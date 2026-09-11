@@ -262,7 +262,7 @@ SEO内容/广告/平台 → 独立站落地页 → 询盘进入系统
 
 | 编号 | 功能 | 需求描述 | 优先级 |
 |---|---|---|---|
-| F-G-01 | 询盘接入 | 独立站表单/邮箱/WhatsApp/B2B 平台询盘统一录入 | P0 |
+| F-G-01 | 询盘接入 | 独立站表单/邮箱/WhatsApp/B2B 平台询盘统一录入；独立站表单可经 `POST /api/public/inquiry`（请求头 `x-site-key` 站点密钥）免登录回传，自动归因来源/关键词/落地页 | P0 |
 | F-G-02 | 询盘自动查重 | 按客户邮箱/域名查重，新客自动建档，老客挂接到现有客户 | P0 |
 | F-G-03 | 快速响应 SLA | 询盘分配后 24 小时未响应自动升级提醒（管理者可见） | P0 |
 | F-G-04 | 询盘状态机 | 待处理 → 处理中 → 已转商机 / 已关闭，流转留痕 | P0 |
@@ -298,7 +298,7 @@ SEO内容/广告/平台 → 独立站落地页 → 询盘进入系统
 | F-J-03 | 团队协作 | 客户/线索转移、评论、@提及 | P1 |
 | F-J-04 | 审计日志 | 关键操作（导出、删除、发送）留痕可查 | P1 |
 | F-J-05 | 通知中心 | 站内+邮件通知订阅设置 | P1 |
-| F-J-06 | 系统设置 | 独立站链接、邮箱账号（IMAP/SMTP）、Google 账号等集成配置 | P0 |
+| F-J-06 | 系统设置 | 独立站链接、站点密钥（询盘回传接口鉴权）、邮箱账号（IMAP/SMTP）、Google 账号等集成配置 | P0 |
 
 ---
 
@@ -313,7 +313,7 @@ SEO内容/广告/平台 → 独立站落地页 → 询盘进入系统
 | `contacts` | id, company_id, name, title_role(Purchasing/Import/Category/Owner), linkedin_url, email, phone, touch_status | 决策人 |
 | `activities` | id, company_id, contact_id, type(email/call/note/meeting), content, next_follow_up, operator, created_at | 跟进时间线 |
 | `opportunities` | id, company_id, stage(inquiry/sample/quote/negotiation/won/lost), amount, expected_date, source | 商机 |
-| `inquiries` | id, company_id, source_channel, content, status, sla_status, assignee, attributed_keyword | 询盘 |
+| `inquiries` | id, company_id, source_channel, content, status, sla_status, assignee, attributed_keyword, landing_page, contact_email | 询盘 |
 | `email_templates` | id, name, subject, body, variables, category, version, is_active | 邮件模板 |
 | `email_sends` | id, template_id, batch_id, contact_id, subject, body, status(sent/delivered/opened/replied/bounced), sent_at | 邮件记录 |
 | `keywords` | id, keyword, category(head/tail), intent(B-side), landing_page, rank, status | 关键词库 |
@@ -323,6 +323,7 @@ SEO内容/广告/平台 → 独立站落地页 → 询盘进入系统
 | `ad_campaigns` | id, name, budget_daily, keywords, negative_keywords, status | 广告计划 |
 | `tasks` | id, title, category(roadmap/weekly/checklist), due_date, assignee, status, related_to | 任务 |
 | `users` | id, name, role(admin/operator/sales), email, settings | 用户 |
+| `settings` | site_url, brand_name, offline_inquiries, site_key | 系统配置（独立站域名 / 询盘回传密钥等） |
 
 **关键约束**：
 - 线索唯一键：`domain`（域名查重）；客户唯一键：`domain` + `name`；

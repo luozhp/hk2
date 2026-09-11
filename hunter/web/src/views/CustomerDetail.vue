@@ -208,8 +208,15 @@ const createOpp = async () => {
   load();
 };
 const changeStage = async (o: any, stage: string) => {
-  await api.companies.updateOpportunity(o.id, { stage });
-  ElMessage.success('商机阶段已更新');
+  const prev = o.stage;
+  o.stage = stage; // 乐观更新
+  try {
+    await api.companies.updateOpportunity(o.id, { stage });
+    ElMessage.success('商机阶段已更新');
+  } catch {
+    o.stage = prev; // 接口失败回滚，避免 UI 与服务端分叉
+    return;
+  }
   load();
 };
 

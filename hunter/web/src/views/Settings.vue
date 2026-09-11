@@ -49,6 +49,32 @@
         </el-card>
 
         <el-card shadow="never" style="margin-top:16px">
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span>独立站询盘回传</span>
+              <el-tag size="small" type="success" effect="light">已启用</el-tag>
+            </div>
+          </template>
+          <div class="site-row" style="margin-bottom:10px">
+            <span class="key-label">站点密钥</span>
+            <el-input v-model="siteKey" size="small" readonly style="flex:1" />
+            <el-button size="small" plain @click="copyKey">复制</el-button>
+            <el-button size="small" type="warning" plain @click="resetKey">重置</el-button>
+          </div>
+          <div class="site-hint" style="margin-bottom:12px">
+            独立站表单 POST 到 <code>{{ apiOrigin }}/api/public/inquiry</code>，请求头携带 <code>x-site-key</code>，即可自动进入「询盘管理」，并按来源（sourceChannel）、归因关键词（attributedKeyword）、落地页（landingPage）完成归因闭环。
+          </div>
+          <div class="code-head">
+            <el-radio-group v-model="codeTab" size="small">
+              <el-radio-button label="js">通用 JS</el-radio-button>
+              <el-radio-button label="vue">Vue 组件</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" text type="primary" @click="copySnippet">复制代码</el-button>
+          </div>
+          <pre class="code-block">{{ currentSnippet }}</pre>
+        </el-card>
+
+        <el-card shadow="never" style="margin-top:16px">
           <template #header>邮箱发送策略（防垃圾信）</template>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="单账号日上限">
@@ -162,8 +188,129 @@ const goCustoms = () => router.push('/customs');
 const isAdmin = computed(() => auth.user?.role === 'admin');
 
 const siteUrl = ref('');
+const siteKey = ref('');
+const apiOrigin = window.location.origin;
 const siteSaving = ref(false);
 const siteForm = reactive({ siteUrl: '', brandName: '', offlineInquiries: 12 });
+
+// 独立站表单回传代码（内插当前系统地址与站点密钥）
+const codeTab = ref<'js' | 'vue'>('js');
+
+const snippetJs = computed(() => `// 在独立站表单提交处理中调用
+async function sendInquiry(formEl) {
+  const q = new URLSearchParams(location.search);
+  const utm = q.get('utm_source');
+  const res = await fetch('${apiOrigin}/api/public/inquiry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-site-key': '${siteKey.value}' },
+    body: JSON.stringify({
+      content: formEl.message.value,                    // 询盘内容（必填）
+      contactEmail: formEl.email.value,                 // 联系邮箱（选填）
+      sourceChannel: utm === 'google' ? 'ads' : 'seo',  // 来源：seo/ads/platform/email/referral
+      attributedKeyword: q.get('kw'),                   // 归因关键词（选填）
+      landingPage: location.pathname,                   // 落地页路径（选填）
+    }),
+  });
+  if (res.ok) alert('已提交，我们会尽快联系你');
+}
+
+// 用法：<form onsubmit="event.preventDefault(); sendInquiry(this)">`);
+
+const VUE_CLOSE = '<' + '/script>';
+
+const snippetVue = computed(() => `<!-- 独立站询盘表单 InquiryForm.vue（Vue 3，零依赖） -->
+<script setup>
+import { reactive, ref } from 'vue';
+
+const form = reactive({ company: '', email: '', message: '' });
+const submitting = ref(false);
+const done = ref(false);
+const error = ref('');
+const KEY = 'hunter_attr';
+
+function readAttr() {
+  const m = document.cookie.match(/(?:^|; )hunter_attr=([^;]*)/);
+  try { return m ? JSON.parse(decodeURIComponent(m[1])) : {}; } catch { return {}; }
+}
+
+// 首次落地记录来源（建议在 main.js 也全局调用一次）
+(function capture() {
+  const q = new URLSearchParams(location.search);
+  const d = {
+    landingPage: location.pathname,
+    utmSource: q.get('utm_source') || '',
+    utmMedium: q.get('utm_medium') || '',
+    keyword: q.get('kw') || q.get('utm_term') || '',
+    referrer: document.referrer || '',
+  };
+  if (d.utmSource || !document.cookie.includes(KEY + '='))
+    document.cookie = KEY + '=' + encodeURIComponent(JSON.stringify(d)) + ';path=/;max-age=' + 60 * 60 * 24 * 90 + ';SameSite=Lax';
+})();
+
+function channel(a) {
+  const s = (a.utmSource || '').toLowerCase(), m = (a.utmMedium || '').toLowerCase();
+  if ((s.includes('google') || s.includes('bing')) && /(cpc|ppc|ads)/.test(m)) return 'ads';
+  if (s.includes('email')) return 'email';
+  if (s.includes('linkedin')) return 'referral';
+  return 'seo';
+}
+
+async function submit() {
+  error.value = '';
+  if (!form.message.trim()) return (error.value = '请填写需求内容');
+  if (!form.email.includes('@')) return (error.value = '请填写有效的邮箱');
+  const a = readAttr();
+  submitting.value = true;
+  try {
+    const res = await fetch('${apiOrigin}/api/public/inquiry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-site-key': '${siteKey.value}' },
+      body: JSON.stringify({
+        content: 'Company: ' + (form.company || '-') + ' | Message: ' + form.message + ' | Source: ' + (a.utmSource || a.referrer || 'direct') + '/' + (a.utmMedium || '-'),
+        contactEmail: form.email.trim(),
+        sourceChannel: channel(a),
+        attributedKeyword: a.keyword || null,
+        landingPage: a.landingPage || location.pathname,
+      }),
+    });
+    if (!res.ok) throw new Error();
+    done.value = true;
+  } catch { error.value = '提交失败，请稍后重试'; }
+  finally { submitting.value = false; }
+}
+${VUE_CLOSE}
+<template>
+  <form @submit.prevent="submit">
+    <p v-if="done">✓ 已提交，我们会尽快联系你</p>
+    <template v-else>
+      <input v-model="form.company" placeholder="Company" />
+      <input v-model="form.email" type="email" placeholder="Work email *" required />
+      <textarea v-model="form.message" rows="4" placeholder="What do you need? *" required />
+      <p v-if="error" style="color:#dc2626">{{ error }}</p>
+      <button type="submit" :disabled="submitting">{{ submitting ? 'Sending…' : 'Send inquiry' }}</button>
+    </template>
+  </form>
+</template>`);
+
+const currentSnippet = computed(() => (codeTab.value === 'vue' ? snippetVue.value : snippetJs.value));
+
+const copyKey = async () => {
+  try { await navigator.clipboard.writeText(siteKey.value); ElMessage.success('密钥已复制'); }
+  catch { ElMessage.warning('复制失败，请手动选择复制'); }
+};
+
+const copySnippet = async () => {
+  try { await navigator.clipboard.writeText(currentSnippet.value); ElMessage.success('对接代码已复制'); }
+  catch { ElMessage.warning('复制失败，请手动选择复制'); }
+};
+
+const resetKey = async () => {
+  await ElMessageBox.confirm('重置后原密钥立即失效，已上线的独立站表单需同步更新新密钥。确定重置？', '重置站点密钥', { type: 'warning' });
+  const key = 'sk_' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
+  const s = await api.settings.update({ siteKey: key });
+  siteKey.value = s.siteKey || key;
+  ElMessage.success('已重置，请更新独立站表单密钥');
+};
 
 const loadSite = async () => {
   const s = await api.settings.get();
@@ -171,6 +318,7 @@ const loadSite = async () => {
   siteForm.brandName = s?.brandName || '';
   siteForm.offlineInquiries = Number(s?.offlineInquiries ?? 12) || 0;
   siteUrl.value = siteForm.siteUrl;
+  siteKey.value = s?.siteKey || '';
 };
 
 const saveSite = async () => {
@@ -285,8 +433,8 @@ async function toggleUser(row: any) {
 
 const resetData = async () => {
   await ElMessageBox.confirm('重置将恢复初始种子数据（现有业务数据将被覆盖），确定继续？', '重置系统数据', { type: 'warning' });
-  const axios = (await import('axios')).default;
-  await axios.post('/api/reset');
+  // 走统一 http 实例：自动携带 JWT，错误由拦截器统一提示（此前裸 axios 无鉴权、无提示）
+  await api.reset();
   ElMessage.success('数据已重置（刷新页面生效）');
 };
 </script>
@@ -294,4 +442,17 @@ const resetData = async () => {
 <style scoped>
 .site-row { display: flex; align-items: center; gap: 8px; }
 .site-hint { font-size: 12px; color: #c0c4cc; margin-top: 6px; line-height: 1.6; }
+.key-label { font-size: 13px; color: #606266; white-space: nowrap; }
+.code-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #606266; margin-bottom: 6px; }
+.code-block {
+  margin: 0;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: #cfe3ff;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow: auto;
+  max-height: 320px;
+}
 </style>

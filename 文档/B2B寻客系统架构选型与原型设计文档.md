@@ -216,8 +216,16 @@
 
 ### 6.4 独立站询盘
 
-- 独立站表单增加 webhook/API 提交至系统；或邮件接入自动建档。
-- 询盘查重（邮箱/域名）自动归属。
+- **已实现（外部提交接口）**：独立站表单直接回传系统，免登录、按站点密钥校验。
+  - 接口：`POST /api/public/inquiry`（`@Public()`，无需 JWT）
+  - 鉴权：请求头 `x-site-key`，需与「系统设置 → 独立站询盘回传」展示的密钥一致；密钥首次读取设置时自动生成（`settings.siteKey`），可在设置页一键重置。
+  - 请求体：`{ content(必填), contactEmail, sourceChannel(seo/ads/platform/email/referral), attributedKeyword, landingPage }`
+  - 归因：写入「询盘管理」，`sourceChannel` / `attributedKeyword` / `landingPage` 三要素进入数据看板「渠道贡献」与漏斗统计，形成「独立站 → 询盘 → 看板」闭环。
+  - 跨域：服务端已开启 CORS（`origin: true`），独立站可直接 `fetch` 调用。
+  - 对接代码：设置页提供「复制即用」的表单示例（含 UTM / 落地页自动打标）。
+- 邮件接入自动建档：后续增强。
+- 询盘查重（邮箱/域名）自动归属：后续增强。
+- 完整对接示例（Vue 前端组件 + 服务端代理 + UTM 采集 + 字段映射 + 排查手册）：见同目录《独立站询盘对接指南（Vue 前端）.md》。
 
 ### 6.5 第三方文件与导入
 
@@ -354,7 +362,7 @@
 ### 8.2 被动获客接入流程
 
 ```
-独立站询盘(webhook/邮件) → 询盘中心 → 查重:
+独立站询盘(POST /api/public/inquiry · x-site-key ｜ 邮件) → 询盘中心 → 查重:
   ├─ 新客: 自动建客户档案 → 分配业务员 → 24h SLA 计时
   └─ 老客: 挂接到现有客户 → 时间线记录来源渠道
 之后广告/SEO 数据 → 询盘归因(来源关键词/落地页) → 看板

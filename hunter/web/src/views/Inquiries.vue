@@ -80,6 +80,18 @@
           <el-empty description="暂无询盘，点击右上角「登记询盘」录入" :image-size="80" />
         </template>
       </el-table>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="onPageChange"
+          @size-change="onSizeChange"
+        />
+      </div>
     </el-card>
 
     <el-dialog v-model="dialog" :title="editing ? '编辑询盘' : '登记询盘'" width="600px">
@@ -131,6 +143,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
+import { fmtDate } from '../utils/format';
 
 const CHANNELS = [
   { value: 'seo', label: '独立站自然搜索', type: 'success' },
@@ -173,16 +186,29 @@ const channelLabel = (v: string) => CHANNELS.find((c) => c.value === v)?.label |
 const channelType = (v: string) => (CHANNELS.find((c) => c.value === v)?.type as any) || 'info';
 const statusLabel = (v: string) => STATUSES.find((s) => s.value === v)?.label || v || '—';
 const statusType = (v: string) => (STATUSES.find((s) => s.value === v)?.type as any) || 'info';
-const fmtDate = (v: string) => (v ? String(v).slice(0, 10) : '—');
+// fmtDate 已收敛到 utils/format，各页面统一引用
 
+// 服务端分页：传 page/pageSize，后端返回 { rows, total }
+const page = ref(1);
+const pageSize = ref(20);
+const total = ref(0);
+const onPageChange = (p: number) => { page.value = p; load(); };
+const onSizeChange = (s: number) => { pageSize.value = s; page.value = 1; load(); };
+
+// 请求序号守卫：快速切换筛选时丢弃过期响应，避免旧结果覆盖新结果（竞态）
+let loadSeq = 0;
 const load = async () => {
+  const seq = ++loadSeq;
   loading.value = true;
   try {
-    const params: any = {};
+    // 服务端分页：传 page/pageSize，后端返回 { rows, total }
+    const params: any = { page: page.value, pageSize: pageSize.value };
     if (filters.channel) params.channel = filters.channel;
     if (filters.status) params.status = filters.status;
     const [list, s] = await Promise.all([api.inquiries.list(params), api.inquiries.stats()]);
-    rows.value = Array.isArray(list) ? list : [];
+    if (seq !== loadSeq) return; // 已有更新的请求，丢弃本次过期结果
+    rows.value = (list as any)?.rows || (Array.isArray(list) ? list : []);
+    total.value = (list as any)?.total ?? rows.value.length;
     stats.value = s || { byChannel: {} };
   } finally {
     loading.value = false;

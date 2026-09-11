@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Module, Injectable } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Module, Injectable, NotFoundException } from '@nestjs/common';
 import { DbService } from '../db/db.service';
+import { Roles } from '../auth/auth.guard';
 
 @Injectable()
 class KeywordsService {
@@ -27,7 +28,8 @@ class KeywordsService {
   /** 局部更新：排名、收录状态、落地页归属、类型（排名跟踪 F-E-05 轻量版） */
   updateKeyword(id: string, body: any) {
     const kw = this.db.db.keywords.find((k) => k.id === id);
-    if (!kw) return { ok: false, message: '关键词不存在' };
+    // 统一错误响应：改为抛 HTTP 异常（前端 patch 已做 try/catch 回滚）
+    if (!kw) throw new NotFoundException('关键词不存在');
     if (body.keyword !== undefined && body.keyword) kw.keyword = body.keyword;
     if (body.category !== undefined && body.category) kw.category = body.category;
     if (body.landingPage !== undefined && body.landingPage) kw.landingPage = body.landingPage;
@@ -61,11 +63,17 @@ class KeywordsService {
 export class KeywordsController {
   constructor(private svc: KeywordsService) {}
   @Get() keywords() { return this.svc.keywords(); }
+  // 关键词库与否定词属运营配置：仅管理员 / 运营专员可写，业务员只读
+  @Roles('admin', 'operator')
   @Post() addKeyword(@Body() b: any) { return this.svc.addKeyword(b); }
+  @Roles('admin', 'operator')
   @Delete(':id') removeKeyword(@Param('id') id: string) { return this.svc.removeKeyword(id); }
+  @Roles('admin', 'operator')
   @Patch(':id') updateKeyword(@Param('id') id: string, @Body() b: any) { return this.svc.updateKeyword(id, b); }
   @Get('negative') negativeKeywords() { return this.svc.negativeKeywords(); }
+  @Roles('admin', 'operator')
   @Post('negative') addNegative(@Body() b: any) { return this.svc.addNegative(b); }
+  @Roles('admin', 'operator')
   @Delete('negative/:id') removeNegative(@Param('id') id: string) { return this.svc.removeNegative(id); }
 }
 

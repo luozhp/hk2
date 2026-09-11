@@ -24,7 +24,12 @@
             :key="f.id"
             class="fair-card"
             :class="{ active: activeFair?.id === f.id }"
+            role="button"
+            tabindex="0"
+            :aria-pressed="activeFair?.id === f.id"
             @click="selectFair(f)"
+            @keydown.enter.prevent="selectFair(f)"
+            @keydown.space.prevent="selectFair(f)"
           >
             <div class="fair-head">
               <div class="fair-name">{{ f.name }}</div>

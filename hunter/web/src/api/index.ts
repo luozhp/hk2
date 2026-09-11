@@ -29,7 +29,12 @@ http.interceptors.response.use(
     if (Array.isArray(msg)) {
       ElMessage.error(msg.join('；'));
     } else if (typeof msg === 'string' && !isLoginCall) {
-      ElMessage.error(msg);
+      // 5xx 不直出后端原文（可能含堆栈/内部细节）
+      ElMessage.error(status && status >= 500 ? '服务器异常，请稍后重试' : msg);
+    } else if (!isLoginCall) {
+      // 无响应（断网 / 超时）时给出兜底提示，避免完全静默
+      const timedOut = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
+      ElMessage.error(timedOut ? '请求超时，请检查网络后重试' : '网络异常，请检查连接后重试');
     }
     return Promise.reject(error);
   },
@@ -49,6 +54,9 @@ export const api = {
     toggleStatus: (id: string, status: string) =>
       http.post(`/auth/users/${id}/status`, { status }).then((r) => r.data),
   },
+  // 整库重置（后端已限制为管理员），走统一实例以携带 token
+  reset: () => http.post('/reset').then((r) => r.data),
+
   dashboard: {
     overview: () => http.get('/dashboard/overview').then((r) => r.data),
   },

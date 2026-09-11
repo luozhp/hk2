@@ -136,7 +136,12 @@
         </el-card>
 
         <el-card shadow="never" style="margin-top:16px">
-          <template #header>广告计划（小预算测试）</template>
+          <template #header>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <span>广告计划（小预算测试）</span>
+              <el-tag size="small" type="warning" effect="plain">示例数据（未接 API）</el-tag>
+            </div>
+          </template>
           <div v-for="a in adCampaigns" :key="a.id" class="ad-item">
             <div class="ad-row">
               <span class="ad-name">{{ a.name }}</span>
@@ -337,11 +342,16 @@ const lpForm = reactive<any>({ path: '', title: '', intent: '', goal: '', module
 const modulePresets = ['工厂实拍与产能', '合规资质 MSDS / UN-DOT', 'MOQ 与阶梯报价表', 'OEM/ODM 流程图', '邮箱 + 表单 + WhatsApp', '贴牌案例'];
 const landingPaths = computed(() => landingPages.value.map((p: any) => p.path));
 
-// 排名 / 状态 / 落地页归属：行内改动即时保存
+// 排名 / 状态 / 落地页归属：行内改动即时保存（乐观更新 + 失败回滚，不再整表重载）
 const patch = async (row: any, data: any) => {
-  await api.keywords.update(row.id, data);
-  ElMessage.success('已更新');
-  load();
+  const prev: any = { ...row };
+  Object.assign(row, data);
+  try {
+    await api.keywords.update(row.id, data);
+    ElMessage.success('已更新');
+  } catch {
+    Object.assign(row, prev);
+  }
 };
 
 const openLp = (row?: any) => {
@@ -378,9 +388,14 @@ const saveLp = async () => {
 };
 
 const patchLp = async (row: any, data: any) => {
-  await api.landing.update(row.id, data);
-  ElMessage.success('已更新');
-  load();
+  const prev: any = { ...row };
+  Object.assign(row, data);
+  try {
+    await api.landing.update(row.id, data);
+    ElMessage.success('已更新');
+  } catch {
+    Object.assign(row, prev);
+  }
 };
 
 const removeLp = async (row: any) => {
